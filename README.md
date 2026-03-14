@@ -59,10 +59,48 @@ make install
 
 Treehouse manages a **pool of git worktrees** per repository, stored under `~/.treehouse/`.
 
-- **Detached HEAD** — worktrees are checked out at `origin/main` in detached HEAD mode, avoiding branch name conflicts entirely.
-- **No daemon** — all operations are inline CLI commands. No background processes, no port conflicts, no state to get corrupted.
-- **Self-healing** — stale state entries (from crashed shells or killed processes) are automatically cleaned up on the next operation.
-- **In-use detection** — treehouse scans running processes to determine which worktrees are active in-use. Usage state is never cached, so it's always accurate.
+```
+  treehouse
+      │
+      ▼
+  Find repo root
+      │
+      ▼
+  git fetch origin
+      │
+      ▼
+  ┌──────────────────────────────────┐
+  │  Scan pool for available worktree│
+  │  (not in-use, not dirty)         │
+  └──────────┬───────────────────────┘
+             │
+        ┌────┴────┐
+        │  Found? │
+        └────┬────┘
+         yes/ \no
+           /   \
+          ▼     ▼
+   Reset to   Create new worktree
+   HEAD of    (detached HEAD at
+   default    default branch)
+   branch     & add to pool
+         \   /
+          \ /
+           ▼
+  Spawn subshell in worktree
+  (agent works here)
+           │
+           ▼
+     exit subshell
+           │
+           ▼
+  Reset worktree & return to pool
+  (ready for next agent)
+```
+
+- **Detached HEAD** — worktrees use detached HEAD mode, avoiding branch name conflicts entirely.
+- **No daemon** — all operations are inline CLI commands. No background processes, no state to get corrupted.
+- **In-use detection** — treehouse scans running processes to determine which worktrees are in-use. Usage state is never persisted, so it's always accurate.
 
 ## CLI Reference
 
