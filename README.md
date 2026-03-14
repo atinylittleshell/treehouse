@@ -23,7 +23,7 @@ $ treehouse                    # get a worktree and drop into a subshell
 # You're now in an isolated worktree.
 # Run your AI agent, make changes, do whatever you need.
 
-$ exit                         # auto-return when done
+$ exit                         # exit the subshell when you're done
 🌳 Worktree returned to pool.
 ```
 
