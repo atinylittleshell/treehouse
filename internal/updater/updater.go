@@ -582,11 +582,15 @@ func atomicReplace(target, newBinary string) error {
 		return err
 	}
 
-	// Create temp file in same directory as target (ensures same filesystem for rename)
+	// Try atomic replace: create temp file in same directory (ensures same
+	// filesystem for rename), copy new binary, then rename over target.
+	// This can fail if the user doesn't have write permission to the
+	// directory (e.g. /usr/local/bin owned by root) even though they own
+	// the file itself. In that case, fall back to direct overwrite.
 	dir := filepath.Dir(target)
 	tmp, err := os.CreateTemp(dir, ".treehouse-update-*")
 	if err != nil {
-		return err
+		return directOverwrite(target, newBinary, info.Mode())
 	}
 	tmpPath := tmp.Name()
 
@@ -620,4 +624,29 @@ func atomicReplace(target, newBinary string) error {
 	}
 
 	return nil
+}
+
+// directOverwrite replaces the target binary by truncating and writing to it
+// directly. This is used when we cannot create temp files in the target
+// directory (e.g. /usr/local/bin owned by root) but the user owns the file.
+// This is not atomic — there's a brief window where the binary is incomplete —
+// but it's better than failing the update entirely.
+func directOverwrite(target, newBinary string, mode os.FileMode) error {
+	src, err := os.Open(newBinary)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.OpenFile(target, os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return err
+	}
+
+	return dst.Chmod(mode)
 }
