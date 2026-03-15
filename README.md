@@ -73,10 +73,10 @@ Treehouse manages a **pool of git worktrees** per repository, stored under `~/.t
   git fetch origin
       │
       ▼
-  ┌──────────────────────────────────┐
-  │  Scan pool for available worktree│
-  │  (not in-use, not dirty)         │
-  └──────────┬───────────────────────┘
+  ┌────────────────────────────────────┐
+  │  Scan pool for available worktree  │
+  │  (not in-use, not dirty)           │
+  └──────────┬─────────────────────────┘
              │
         ┌────┴────┐
         │  Found? │
@@ -85,12 +85,13 @@ Treehouse manages a **pool of git worktrees** per repository, stored under `~/.t
            /   \
           ▼     ▼
    Reset to   Create new worktree
-   HEAD of    (detached HEAD at
-   default    default branch)
-   branch     & add to pool
-         \   /
-          \ /
-           ▼
+   latest     (detached HEAD at
+   default    latest default
+   branch     branch)
+              & add to pool
+          \   /
+           \ /
+            ▼
   Spawn subshell in worktree
   (agent works here)
            │
@@ -102,7 +103,7 @@ Treehouse manages a **pool of git worktrees** per repository, stored under `~/.t
   (ready for next agent)
 ```
 
-- **Detached HEAD** — worktrees use detached HEAD mode, avoiding branch name conflicts entirely.
+- **Detached HEAD** — worktrees use detached HEAD mode, reset to whichever of the local or remote default branch is further ahead, avoiding branch name conflicts entirely.
 - **No daemon** — all operations are inline CLI commands. No background processes, no state to get corrupted.
 - **In-use detection** — treehouse scans running processes to determine which worktrees are in-use. Usage state is never persisted, so it's always accurate.
 
@@ -112,7 +113,7 @@ Treehouse manages a **pool of git worktrees** per repository, stored under `~/.t
 | -------------------------- | ---------------------------------------------------- |
 | `treehouse`                | Get a worktree and open a subshell (alias for `get`) |
 | `treehouse get`            | Acquire a worktree from the pool                     |
-| `treehouse status`         | Show pool status (name, path, status)                |
+| `treehouse status`         | Show pool status (highlights your current worktree)  |
 | `treehouse return [path]`  | Return a worktree to the pool                        |
 | `treehouse destroy [path]` | Remove a worktree from the pool                      |
 | `treehouse init`           | Create a default `treehouse.toml` config file        |

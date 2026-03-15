@@ -74,14 +74,38 @@ func refExists(repoRoot, ref string) bool {
 	return err == nil
 }
 
-// branchRef returns "origin/<branch>" if that ref exists,
-// otherwise just "<branch>" for local-only or not-yet-pushed repos.
+// branchRef returns whichever of the local branch or origin/<branch> is
+// further ahead. If they have diverged (neither is an ancestor of the
+// other), it prefers origin. Falls back to whichever ref exists.
 func branchRef(repoRoot, branch string) string {
+	local := "refs/heads/" + branch
 	remote := "origin/" + branch
-	if refExists(repoRoot, remote) {
+	hasLocal := refExists(repoRoot, local)
+	hasRemote := refExists(repoRoot, remote)
+
+	switch {
+	case hasLocal && hasRemote:
+		// If local is ancestor of remote, remote is ahead (or equal).
+		if isAncestor(repoRoot, local, remote) {
+			return remote
+		}
+		// Otherwise local is ahead or they diverged; prefer local when
+		// it's strictly ahead, prefer remote on divergence.
+		if isAncestor(repoRoot, remote, local) {
+			return branch
+		}
+		return remote
+	case hasLocal:
+		return branch
+	default:
 		return remote
 	}
-	return branch
+}
+
+// isAncestor returns true if ref a is an ancestor of (or equal to) ref b.
+func isAncestor(repoRoot, a, b string) bool {
+	_, err := runGit(repoRoot, "merge-base", "--is-ancestor", a, b)
+	return err == nil
 }
 
 func AddWorktree(repoRoot, path, branch string) error {

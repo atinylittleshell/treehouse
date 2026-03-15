@@ -34,7 +34,7 @@ make test
 ## Key Design Decisions
 
 - No daemon — all operations are inline CLI commands
-- Detached HEAD worktrees to avoid branch conflicts
+- Detached HEAD worktrees reset to whichever of local or origin default branch is further ahead (prefers origin on divergence)
 - In-use detection is runtime-only (process scanning), never persisted
 - State file only tracks pool membership, not usage status
 - Git operations shell out to `git` (go-git has incomplete worktree support)
