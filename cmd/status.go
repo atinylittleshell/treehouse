@@ -41,6 +41,10 @@ var statusCmd = &cobra.Command{
 		green := color.New(color.FgGreen).SprintFunc()
 		red := color.New(color.FgRed).SprintFunc()
 		yellow := color.New(color.FgYellow).SprintFunc()
+		cyan := color.New(color.FgCyan, color.Bold).SprintFunc()
+
+		// statusWidth must be >= longest status string ("you're here" = 11)
+		const statusWidth = 11
 
 		for _, wt := range worktrees {
 			var status string
@@ -51,10 +55,12 @@ var statusCmd = &cobra.Command{
 				status = red(wt.Status)
 			case pool.StatusDirty:
 				status = yellow(wt.Status)
+			case pool.StatusHere:
+				status = cyan(wt.Status)
 			}
 
-			// "%-4s  %-9s  " = 4 + 2 + 9 + 2 = 17 chars before path
-			statusPad := strings.Repeat(" ", 9-len(wt.Status))
+			// "%-4s  %-11s  " = 4 + 2 + 11 + 2 = 19 chars before path
+			statusPad := strings.Repeat(" ", statusWidth-len(wt.Status))
 			fmt.Fprintf(os.Stdout, "%-4s  %s%s  %s\n", wt.Name, status, statusPad, ui.PrettyPath(wt.Path))
 
 			if len(wt.Processes) > 0 {
@@ -62,7 +68,7 @@ var statusCmd = &cobra.Command{
 				for _, p := range wt.Processes {
 					procStrs = append(procStrs, p.String())
 				}
-				fmt.Fprintf(os.Stdout, "%s%s\n", strings.Repeat(" ", 17), strings.Join(procStrs, ", "))
+				fmt.Fprintf(os.Stdout, "%s%s\n", strings.Repeat(" ", 4+2+statusWidth+2), strings.Join(procStrs, ", "))
 			}
 		}
 		return nil

@@ -15,6 +15,7 @@ const (
 	StatusAvailable = "available"
 	StatusDirty     = "dirty"
 	StatusInUse     = "in-use"
+	StatusHere      = "you're here"
 )
 
 type WorktreeStatus struct {
@@ -121,6 +122,8 @@ func List(poolDir string) ([]WorktreeStatus, error) {
 			return err
 		}
 
+		cwd, _ := os.Getwd()
+
 		for _, wt := range state.Worktrees {
 			ws := WorktreeStatus{
 				Name:   wt.Name,
@@ -133,6 +136,9 @@ func List(poolDir string) ([]WorktreeStatus, error) {
 
 			if len(procs) > 0 {
 				ws.Status = StatusInUse
+				if cwdInWorktree(cwd, wt.Path) {
+					ws.Status = StatusHere
+				}
 			} else if dirty, _ := git.IsDirty(wt.Path); dirty {
 				ws.Status = StatusDirty
 			}
@@ -227,6 +233,22 @@ func healState(state State) State {
 	}
 	state.Worktrees = healed
 	return state
+}
+
+func cwdInWorktree(cwd, worktreePath string) bool {
+	absCwd, err := filepath.Abs(cwd)
+	if err != nil {
+		return false
+	}
+	absWt, err := filepath.Abs(worktreePath)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absWt, absCwd)
+	if err != nil {
+		return false
+	}
+	return rel == "." || !filepath.IsAbs(rel) && len(rel) >= 1 && rel[0] != '.'
 }
 
 func nextName(state State) string {
