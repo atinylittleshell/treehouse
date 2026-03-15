@@ -4,7 +4,11 @@
 [![Release](https://github.com/atinylittleshell/treehouse/actions/workflows/release.yml/badge.svg)](https://github.com/atinylittleshell/treehouse/actions/workflows/release.yml)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue)
 
-<h2 align="center">Never stop prompting.</h2>
+<h3 align="center">Manage worktrees without managing worktrees.</h3>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/atinylittleshell/treehouse/main/demo.gif" alt="treehouse demo" width="800" />
+</p>
 
 Run parallel coding agents on the same repo without conflicts.
 Treehouse helps you manage a pool of reusable, isolated worktrees so each of your agents gets its own environment instantly — no cloning, no conflicts, no coordination overhead.

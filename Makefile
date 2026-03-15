@@ -1,4 +1,4 @@
-.PHONY: build test lint dist install clean
+.PHONY: build test lint dist install clean demo
 
 VERSION ?= dev
 LDFLAGS := -X main.version=$(VERSION)
@@ -25,5 +25,8 @@ dist:
 install: build
 	cp treehouse $(GOPATH)/bin/ 2>/dev/null || cp treehouse /usr/local/bin/
 
+demo: build
+	vhs demo.tape
+
 clean:
-	rm -rf treehouse dist/ coverage.out
+	rm -rf treehouse dist/ coverage.out demo.gif
