@@ -21,9 +21,16 @@ Enter
 Sleep 2s
 Show
 
-# Demo: get a worktree
 Type "cd myproject"
 Enter
+Sleep 1s
+
+# Demo: treehouse
+Type "# ready to start a new task? "
+Sleep 1s
+Type "just run treehouse"
+Sleep 3s
+Ctrl+U
 Sleep 1s
 Type "treehouse"
 Enter
@@ -35,13 +42,15 @@ Enter
 Sleep 2s
 
 # Explain: run agent
-Type "# run your coding agent and get some work done..."
+Type "# run your agent and get some work done..."
 Sleep 3s
 Ctrl+U
 Sleep 1s
 
 # Explain: parallel session
-Type "# need to do something in parallel?"
+Type "# need to do something in parallel? "
+Sleep 1s
+Type "just run treehouse"
 Sleep 3s
 Ctrl+U
 Sleep 1s
@@ -53,6 +62,12 @@ Sleep 2s
 Type "treehouse status"
 Enter
 Sleep 2s
+
+# Explain: run agent
+Type "# when you are done, just exit the subshell"
+Sleep 3s
+Ctrl+U
+Sleep 1s
 
 # Exit subshell (returns worktree to pool)
 Type "exit"
@@ -65,6 +80,8 @@ Enter
 Sleep 2s
 
 # Explain: treehouse
-Type "# manage worktrees without managing worktrees. use treehouse"
+Type "# manage worktrees without managing worktrees. "
+Sleep 1s
+Type "treehouse"
 Sleep 10s
 
