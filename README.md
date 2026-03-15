@@ -6,15 +6,18 @@
 
 <h3 align="center">Manage worktrees without managing worktrees.</h3>
 
+Are you still only running one agent at a time? Are you manually juggling between a few duplicate repo clones?
+
+Or... are you starting a new worktree for every agent session, and losing all your installed dependencies and build cache each time?
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/atinylittleshell/treehouse/main/demo.gif" alt="treehouse demo" width="800" />
 </p>
 
-Run parallel coding agents on the same repo without conflicts.
 Treehouse helps you manage a pool of reusable, isolated worktrees so each of your agents gets its own environment instantly — no cloning, no conflicts, no coordination overhead.
 
 - **Instant isolation** — `treehouse` puts you into a clean worktree with zero hassel.
-- **Reusable worktrees** — worktrees are returned to the pool when you're done, with dependencies and build cache intact, ready for the next agent.
+- **Reusable worktrees** — worktrees are preserved in a pool when you're done, with dependencies and build cache intact, ready for the next agent.
 - **Conflict-free** — automatic detection of in-use worktrees and your agents never step on each other's toes.
 
 ## Quick Start
