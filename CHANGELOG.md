@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/atinylittleshell/treehouse/compare/v1.1.0...v1.1.1) (2026-03-15)
+
+
+### Bug Fixes
+
+* install under ~/.local/bin when in PATH ([08bb5b6](https://github.com/atinylittleshell/treehouse/commit/08bb5b6ec2fa91d2f9e426164cd3313d90812918))
+
 ## [1.1.0](https://github.com/atinylittleshell/treehouse/compare/v1.0.2...v1.1.0) (2026-03-15)
 
 
