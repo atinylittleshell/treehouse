@@ -6,7 +6,7 @@
 
 <h3 align="center">Manage worktrees without managing worktrees.</h3>
 
-Are you still only running one agent at a time? Are you manually juggling between a few duplicate repo clones?
+Are you still only working on one task at a time? Are you manually juggling between a few clones of the same repo?
 
 Or... are you starting a new worktree for every agent session, and losing all your installed dependencies and build cache each time?
 
