@@ -3,12 +3,13 @@
 [![CI](https://github.com/kunchenguid/treehouse/actions/workflows/ci.yml/badge.svg)](https://github.com/kunchenguid/treehouse/actions/workflows/ci.yml)
 [![Release](https://github.com/kunchenguid/treehouse/actions/workflows/release.yml/badge.svg)](https://github.com/kunchenguid/treehouse/actions/workflows/release.yml)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue)
+[![X](https://img.shields.io/badge/X-@kunchenxyz-black?logo=x)](https://x.com/kunchenxyz)
 
 <h3 align="center">Manage worktrees without managing worktrees.</h3>
 
 Are you still only working on one task at a time? Are you manually juggling between a few clones of the same repo?
 
-Or... are you starting a new worktree for every agent session, and losing all your installed dependencies and build cache each time?
+Or... are you starting a new worktree for every agent session, losing all your installed dependencies and build cache each time, and wondering why your agents are slow?
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/kunchenguid/treehouse/main/demo.gif" alt="treehouse demo" width="800" />
