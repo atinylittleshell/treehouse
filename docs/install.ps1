@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$repo = "atinylittleshell/treehouse"
+$repo = "kunchenguid/treehouse"
 $installDir = "$env:LOCALAPPDATA\treehouse"
 
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }

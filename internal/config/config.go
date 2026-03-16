@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
-	"github.com/atinylittleshell/treehouse/internal/git"
+	"github.com/kunchenguid/treehouse/internal/git"
 )
 
 type Config struct {

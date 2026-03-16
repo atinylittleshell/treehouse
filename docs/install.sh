@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-REPO="atinylittleshell/treehouse"
+REPO="kunchenguid/treehouse"
 
 # Prefer ~/.local/bin if it exists and is in PATH (no sudo needed).
 # Fall back to /usr/local/bin otherwise.

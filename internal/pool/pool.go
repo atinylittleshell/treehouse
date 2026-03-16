@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/atinylittleshell/treehouse/internal/git"
-	"github.com/atinylittleshell/treehouse/internal/process"
+	"github.com/kunchenguid/treehouse/internal/git"
+	"github.com/kunchenguid/treehouse/internal/process"
 )
 
 const (

@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	defaultGitHubAPIURL = "https://api.github.com/repos/atinylittleshell/treehouse/releases/latest"
+	defaultGitHubAPIURL = "https://api.github.com/repos/kunchenguid/treehouse/releases/latest"
 	cacheFileName       = "update-check.json"
 	checksumsFile       = "checksums.txt"
 	cacheTTL            = 24 * time.Hour

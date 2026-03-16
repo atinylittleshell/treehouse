@@ -6,11 +6,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/atinylittleshell/treehouse/internal/config"
-	"github.com/atinylittleshell/treehouse/internal/git"
-	"github.com/atinylittleshell/treehouse/internal/pool"
-	"github.com/atinylittleshell/treehouse/internal/shell"
-	"github.com/atinylittleshell/treehouse/internal/ui"
+	"github.com/kunchenguid/treehouse/internal/config"
+	"github.com/kunchenguid/treehouse/internal/git"
+	"github.com/kunchenguid/treehouse/internal/pool"
+	"github.com/kunchenguid/treehouse/internal/shell"
+	"github.com/kunchenguid/treehouse/internal/ui"
 )
 
 var getCmd = &cobra.Command{

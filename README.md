@@ -1,7 +1,7 @@
 # treehouse
 
-[![CI](https://github.com/atinylittleshell/treehouse/actions/workflows/ci.yml/badge.svg)](https://github.com/atinylittleshell/treehouse/actions/workflows/ci.yml)
-[![Release](https://github.com/atinylittleshell/treehouse/actions/workflows/release.yml/badge.svg)](https://github.com/atinylittleshell/treehouse/actions/workflows/release.yml)
+[![CI](https://github.com/kunchenguid/treehouse/actions/workflows/ci.yml/badge.svg)](https://github.com/kunchenguid/treehouse/actions/workflows/ci.yml)
+[![Release](https://github.com/kunchenguid/treehouse/actions/workflows/release.yml/badge.svg)](https://github.com/kunchenguid/treehouse/actions/workflows/release.yml)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue)
 
 <h3 align="center">Manage worktrees without managing worktrees.</h3>
@@ -11,7 +11,7 @@ Are you still only working on one task at a time? Are you manually juggling betw
 Or... are you starting a new worktree for every agent session, and losing all your installed dependencies and build cache each time?
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/atinylittleshell/treehouse/main/demo.gif" alt="treehouse demo" width="800" />
+  <img src="https://raw.githubusercontent.com/kunchenguid/treehouse/main/demo.gif" alt="treehouse demo" width="800" />
 </p>
 
 Treehouse helps you manage a pool of reusable, isolated worktrees so each of your agents gets its own environment instantly — no cloning, no conflicts, no coordination overhead.
@@ -39,25 +39,25 @@ $ exit                         # exit the subshell when you're done
 **macOS / Linux**
 
 ```sh
-curl -fsSL https://atinylittleshell.github.io/treehouse/install.sh | sh
+curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-irm https://atinylittleshell.github.io/treehouse/install.ps1 | iex
+irm https://kunchenguid.github.io/treehouse/install.ps1 | iex
 ```
 
 **Go**
 
 ```sh
-go install github.com/atinylittleshell/treehouse@latest
+go install github.com/kunchenguid/treehouse@latest
 ```
 
 **From source**
 
 ```sh
-git clone https://github.com/atinylittleshell/treehouse.git
+git clone https://github.com/kunchenguid/treehouse.git
 cd treehouse
 make install
 ```

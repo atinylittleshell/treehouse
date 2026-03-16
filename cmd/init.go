@@ -8,8 +8,8 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 
-	"github.com/atinylittleshell/treehouse/internal/config"
-	"github.com/atinylittleshell/treehouse/internal/git"
+	"github.com/kunchenguid/treehouse/internal/config"
+	"github.com/kunchenguid/treehouse/internal/git"
 )
 
 var initCmd = &cobra.Command{

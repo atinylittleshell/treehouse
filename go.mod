@@ -1,4 +1,4 @@
-module github.com/atinylittleshell/treehouse
+module github.com/kunchenguid/treehouse
 
 go 1.25.5
 

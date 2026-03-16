@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/atinylittleshell/treehouse/internal/updater"
 	"github.com/fatih/color"
+	"github.com/kunchenguid/treehouse/internal/updater"
 	"github.com/spf13/cobra"
 )
 

@@ -5,7 +5,7 @@ Thanks for your interest in contributing!
 ## Getting Started
 
 ```sh
-git clone https://github.com/atinylittleshell/treehouse.git
+git clone https://github.com/kunchenguid/treehouse.git
 cd treehouse
 make build
 make test
@@ -26,7 +26,7 @@ make test
 
 ## Reporting Issues
 
-Open a [GitHub issue](https://github.com/atinylittleshell/treehouse/issues) with steps to reproduce. Include your OS, architecture, and treehouse version (`treehouse --version`).
+Open a [GitHub issue](https://github.com/kunchenguid/treehouse/issues) with steps to reproduce. Include your OS, architecture, and treehouse version (`treehouse --version`).
 
 ## License
 

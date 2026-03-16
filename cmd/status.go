@@ -8,10 +8,10 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/atinylittleshell/treehouse/internal/config"
-	"github.com/atinylittleshell/treehouse/internal/git"
-	"github.com/atinylittleshell/treehouse/internal/pool"
-	"github.com/atinylittleshell/treehouse/internal/ui"
+	"github.com/kunchenguid/treehouse/internal/config"
+	"github.com/kunchenguid/treehouse/internal/git"
+	"github.com/kunchenguid/treehouse/internal/pool"
+	"github.com/kunchenguid/treehouse/internal/ui"
 )
 
 var statusCmd = &cobra.Command{
