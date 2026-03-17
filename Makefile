@@ -32,4 +32,4 @@ demo: build
 	vhs demo.tape
 
 clean:
-	rm -rf treehouse dist/ coverage.out demo.gif
+	rm -rf treehouse dist/ coverage.out
