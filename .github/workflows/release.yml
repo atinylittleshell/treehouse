@@ -107,11 +107,9 @@ jobs:
           TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
           VERSION: ${{ needs.release-please.outputs.version }}
         run: |
-          # Get the previous release and its published date
-          prev_release=$(gh api repos/${{ github.repository }}/releases \
-            --jq "[.[] | select(.tag_name != \"${TAG_NAME}\")] | first")
-          prev_tag=$(echo "$prev_release" | jq -r '.tag_name')
-          prev_date=$(echo "$prev_release" | jq -r '.published_at')
+          # Get the previous tag
+          prev_tag=$(gh api repos/${{ github.repository }}/releases \
+            --jq "[.[] | select(.tag_name != \"${TAG_NAME}\")] | first | .tag_name")
 
           if [ -z "$prev_tag" ] || [ "$prev_tag" = "null" ]; then
             echo "No previous release found, skipping"
@@ -120,40 +118,38 @@ jobs:
 
           echo "Finding PRs between ${prev_tag} and ${TAG_NAME}"
 
-          # Get commits via commits API (supports real pagination, no 250-commit cap)
-          commits=$(gh api repos/${{ github.repository }}/commits \
-            --paginate -f sha="${TAG_NAME}" -f since="${prev_date}" \
-            --jq '.[].sha')
+          # Get commits between tags via compare API (excludes base tag, no inclusive-boundary issue)
+          # Note: limited to 250 commits, but we only need PR numbers which are deduped anyway
+          commits=$(gh api repos/${{ github.repository }}/compare/${prev_tag}...${TAG_NAME} \
+            --jq '.commits[].sha')
 
-          # Collect unique issue numbers from closing references in PRs
-          declare -A seen_issues
+          # Collect unique PR numbers across all commits (avoids duplicate timeline queries)
+          declare -A seen_prs
           for sha in $commits; do
-            # Find PRs associated with this commit
             prs=$(gh api repos/${{ github.repository }}/commits/${sha}/pulls \
               --jq '.[].number' 2>/dev/null || true)
             for pr in $prs; do
-              # Get issues linked via cross-references
-              xref_issues=$(gh api repos/${{ github.repository }}/issues/${pr}/timeline \
-                --paginate --jq '.[] | select(.event == "cross-referenced") | .source.issue.number // empty' 2>/dev/null || true)
+              seen_prs[$pr]=1
+            done
+          done
 
-              # Get issues linked via sidebar (connected events use .url, not .source)
-              connected_issues=$(gh api repos/${{ github.repository }}/issues/${pr}/timeline \
-                --paginate --jq '.[] | select(.event == "connected") | .url' 2>/dev/null \
-                | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+' || true)
+          # For each unique PR, find linked issues via PR body and comment
+          declare -A seen_issues
+          for pr in "${!seen_prs[@]}"; do
+            # Check the PR body for "Fixes #N" / "Closes #N" patterns (same-repo only, excludes org/repo#N)
+            issues=$(gh api repos/${{ github.repository }}/pulls/${pr} \
+              --jq '.body' 2>/dev/null \
+              | grep -oiE '(fix(es|ed)?|close[sd]?|resolve[sd]?)\s+#[0-9]+' \
+              | grep -oE '[0-9]+' || true)
 
-              # Also check the PR body for "Fixes #N" / "Closes #N" patterns
-              body_issues=$(gh api repos/${{ github.repository }}/pulls/${pr} \
-                --jq '.body' 2>/dev/null | grep -oiE '(fix(es|ed)?|close[sd]?|resolve[sd]?)\s+#[0-9]+' | grep -oE '[0-9]+' || true)
-
-              for issue in $xref_issues $connected_issues $body_issues; do
-                if [ -z "${seen_issues[$issue]+x}" ]; then
-                  seen_issues[$issue]=1
-                  echo "Commenting on issue #${issue}"
-                  gh issue comment "$issue" \
-                    --repo ${{ github.repository }} \
-                    --body "This issue has been addressed in [v${VERSION}](https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}). :tada:"
-                fi
-              done
+            for issue in $issues; do
+              if [ -z "${seen_issues[$issue]+x}" ]; then
+                seen_issues[$issue]=1
+                echo "Commenting on issue #${issue}"
+                gh issue comment "$issue" \
+                  --repo ${{ github.repository }} \
+                  --body "This issue has been addressed in [v${VERSION}](https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}). :tada:"
+              fi
             done
           done
 
