@@ -106,9 +106,14 @@ func setupTestRepo(t *testing.T) (repoDir, homeDir string) {
 // HOME (or USERPROFILE on Windows) is set to homeDir so pool state is isolated.
 func runTreehouse(t *testing.T, repoDir, homeDir string, extraEnv []string, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
+	return runTreehouseFromDir(t, repoDir, repoDir, homeDir, extraEnv, args...)
+}
+
+func runTreehouseFromDir(t *testing.T, repoDir, workDir, homeDir string, extraEnv []string, args ...string) (stdout, stderr string, exitCode int) {
+	t.Helper()
 
 	cmd := exec.Command(treehouseBin, args...)
-	cmd.Dir = repoDir
+	cmd.Dir = workDir
 	cmd.Env = buildEnv(homeDir, extraEnv...)
 
 	var outBuf, errBuf bytes.Buffer
@@ -309,6 +314,31 @@ func TestGetReusesWorktree(t *testing.T) {
 
 	if path1 != path2 {
 		t.Errorf("expected worktree reuse, got different paths:\n  first:  %s\n  second: %s", path1, path2)
+	}
+}
+
+func TestReturnFromInsideWorktreeDoesNotTerminateCaller(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	env := []string{"SHELL=" + exitShellBin}
+
+	_, getErr, code := runTreehouse(t, repoDir, homeDir, env, "get")
+	if code != 0 {
+		t.Fatalf("get failed (code %d): %s", code, getErr)
+	}
+	wtPath := extractWorktreePath(getErr, homeDir)
+	if wtPath == "" {
+		t.Fatal("could not extract worktree path")
+	}
+
+	_, returnErr, code := runTreehouseFromDir(t, repoDir, wtPath, homeDir, nil, "return", "--force")
+	if code != 0 {
+		t.Fatalf("return from inside worktree failed (code %d): %s", code, returnErr)
+	}
+	if !strings.Contains(returnErr, "Worktree returned to pool") {
+		t.Fatalf("expected return confirmation, got: %s", returnErr)
+	}
+	if strings.Contains(returnErr, "Terminated lingering processes") && strings.Contains(returnErr, "treehouse") {
+		t.Fatalf("return should not terminate its own process chain: %s", returnErr)
 	}
 }
 
