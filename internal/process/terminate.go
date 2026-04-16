@@ -42,7 +42,10 @@ func filterProtectedProcesses(procs []ProcessInfo, currentPID int32, lookupParen
 
 	for pid := currentPID; pid > 0; {
 		parent, err := lookupParent(pid)
-		if err != nil || parent <= 0 {
+		if err != nil {
+			return nil
+		}
+		if parent <= 0 {
 			break
 		}
 		if _, seen := protected[parent]; seen {

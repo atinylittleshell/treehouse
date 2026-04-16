@@ -36,7 +36,7 @@ func TestFilterProtectedProcesses_SkipsCurrentProcessAndAncestors(t *testing.T) 
 	}
 }
 
-func TestFilterProtectedProcesses_KeepsProcessesWhenParentLookupFails(t *testing.T) {
+func TestFilterProtectedProcesses_SkipsTerminationWhenParentLookupFails(t *testing.T) {
 	procs := []ProcessInfo{
 		{PID: 100, Name: "shell"},
 		{PID: 200, Name: "treehouse"},
@@ -50,10 +50,7 @@ func TestFilterProtectedProcesses_KeepsProcessesWhenParentLookupFails(t *testing
 		return 0, nil
 	})
 
-	if len(filtered) != 2 {
-		t.Fatalf("expected 2 processes after filtering, got %d", len(filtered))
-	}
-	if filtered[0].PID != 100 || filtered[1].PID != 300 {
-		t.Fatalf("expected non-self processes to remain, got %+v", filtered)
+	if len(filtered) != 0 {
+		t.Fatalf("expected no processes after filtering, got %+v", filtered)
 	}
 }
