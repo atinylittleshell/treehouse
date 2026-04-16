@@ -35,6 +35,7 @@ $ treehouse                    # get a worktree and drop into a subshell
 # Run your AI agent, make changes, do whatever you need.
 
 $ exit                         # exit the subshell when you're done
+🌳 Terminated lingering processes: opencode (pid 12345)
 🌳 Worktree returned to pool.
 ```
 
@@ -121,7 +122,9 @@ Treehouse manages a **pool of git worktrees** per repository, stored under `~/.t
      exit subshell
            │
            ▼
-  Reset worktree & return to pool
+  Terminate lingering worktree
+  processes, reset worktree,
+  & return to pool
   (ready for next agent)
 ```
 
@@ -136,7 +139,7 @@ Treehouse manages a **pool of git worktrees** per repository, stored under `~/.t
 | `treehouse`                | Get a worktree and open a subshell (alias for `get`) |
 | `treehouse get`            | Acquire a worktree from the pool                     |
 | `treehouse status`         | Show pool status (highlights your current worktree)  |
-| `treehouse return [path]`  | Return a worktree to the pool                        |
+| `treehouse return [path]`  | Terminate lingering worktree processes and return it to the pool |
 | `treehouse destroy [path]` | Remove a worktree from the pool                      |
 | `treehouse init`           | Create a default `treehouse.toml` config file        |
 | `treehouse update`         | Update treehouse to the latest version               |
