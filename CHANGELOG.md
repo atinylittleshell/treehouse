@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/kunchenguid/treehouse/compare/v1.3.0...v1.3.1) (2026-04-16)
+
+
+### Bug Fixes
+
+* **process:** safely clean up lingering worktree processes ([#17](https://github.com/kunchenguid/treehouse/issues/17)) ([c1e443d](https://github.com/kunchenguid/treehouse/commit/c1e443de639d3bf5a867e71f218153c4816c78ef))
+
 ## [1.3.0](https://github.com/kunchenguid/treehouse/compare/v1.2.1...v1.3.0) (2026-04-04)
 
 
