@@ -35,6 +35,7 @@ func FindProcessesInWorktree(worktreePath string) ([]ProcessInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	absWorktree = resolvePath(absWorktree)
 
 	var result []ProcessInfo
 
@@ -48,6 +49,7 @@ func FindProcessesInWorktree(worktreePath string) ([]ProcessInfo, error) {
 		if err != nil {
 			continue
 		}
+		absCwd = resolvePath(absCwd)
 
 		rel, err := filepath.Rel(absWorktree, absCwd)
 		if err != nil {
@@ -64,4 +66,15 @@ func FindProcessesInWorktree(worktreePath string) ([]ProcessInfo, error) {
 	}
 
 	return result, nil
+}
+
+// resolvePath returns the symlink-resolved path, or the input if resolution
+// fails (e.g. path doesn't exist). This lets us match process cwds (which
+// gopsutil returns canonicalized, e.g. /private/var/... on macOS) against
+// caller-supplied worktree paths that may still contain symlinks.
+func resolvePath(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
 }
