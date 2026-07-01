@@ -114,6 +114,14 @@ func AcquireLeaseInfoWithOptions(repoRoot, poolDir string, poolSize int, postCre
 	})
 }
 
+var (
+	seedWorktree   = vcs.SeedWorktree
+	removeWorktree = vcs.RemoveWorktree
+	writeState     = WriteState
+)
+
+const acquisitionIncompleteLeaseHolder = "quarantined: acquisition state incomplete"
+
 func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts acquireOptions) (LeaseInfo, error) {
 	branch, err := vcs.GetDefaultBranch(repoRoot)
 	if err != nil {
@@ -188,14 +196,54 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			// Found an available one. Reset it to the verified commit only if
 			// HEAD is still the one whose ancestry was checked and the tree is
 			// still clean under the exclusive lock.
-			if err := vcs.ResetWorktreeToRef(wt.Path, resetRef, head, true); err != nil {
+			seededPaths := wt.SeededPaths
+			if !wt.SeedInventoryKnown {
+				seededPaths = nil
+			}
+			if err := vcs.ResetWorktreeToRefWithSeededPaths(wt.Path, resetRef, head, true, seededPaths); err != nil {
 				continue
 			}
+			state.Worktrees[i].SeededPaths = nil
+			state.Worktrees[i].SeedInventoryKnown = false
+			state.Worktrees[i].Leased = true
+			state.Worktrees[i].LeaseHolder = acquisitionIncompleteLeaseHolder
+			state.Worktrees[i].LeasedAt = time.Now()
+			if err := writeState(poolDir, state); err != nil {
+				return err
+			}
+			// Keep partial ignored files away from later acquisitions until a
+			// human verifies and explicitly returns the worktree.
+			seededPaths, err = seedWorktree(repoRoot, wt.Path)
+			if err != nil {
+				state.Worktrees[i].SeededPaths = seededPaths
+				state.Worktrees[i].SeedInventoryKnown = true
+				state.Worktrees[i].Leased = true
+				state.Worktrees[i].LeaseHolder = "quarantined: worktree seeding failed"
+				state.Worktrees[i].LeasedAt = time.Now()
+				if writeErr := WriteState(poolDir, state); writeErr != nil {
+					return fmt.Errorf("failed to seed .worktreeinclude into %s: %w (quarantine failed: %v)", wt.Path, err, writeErr)
+				}
+				return fmt.Errorf("failed to seed .worktreeinclude into %s: %w", wt.Path, err)
+			}
+			state.Worktrees[i].SeededPaths = seededPaths
+			state.Worktrees[i].SeedInventoryKnown = true
+			clearLease(&state.Worktrees[i])
 			if err := markAcquired(&state.Worktrees[i], opts); err != nil {
 				return err
 			}
 			acquired = leaseInfoFromEntry(state.Worktrees[i])
-			if err := WriteState(poolDir, state); err != nil {
+			if err := writeState(poolDir, state); err != nil {
+				// Preserve the completed seed inventory outside the mutable
+				// worktree before leaving this failed acquisition quarantined.
+				state.Worktrees[i].OwnerPID = 0
+				state.Worktrees[i].OwnerStartedAt = 0
+				clearLease(&state.Worktrees[i])
+				state.Worktrees[i].Leased = true
+				state.Worktrees[i].LeaseHolder = acquisitionIncompleteLeaseHolder
+				state.Worktrees[i].LeasedAt = time.Now()
+				if quarantineErr := writeState(poolDir, state); quarantineErr != nil {
+					return fmt.Errorf("%w (quarantine failed: %v)", err, quarantineErr)
+				}
 				return err
 			}
 			runPostCreate = true
@@ -235,19 +283,53 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 		if err := vcs.AddWorktree(repoRoot, wtPath, branch); err != nil {
 			return fmt.Errorf("failed to create worktree: %w", err)
 		}
-
-		entry := WorktreeEntry{
-			Name:      name,
-			Path:      wtPath,
-			CreatedAt: time.Now(),
+		seededPaths, err := seedWorktree(repoRoot, wtPath)
+		if err != nil {
+			// A failed removal leaves a real Git worktree behind. Keep it in
+			// state as quarantined so later acquisitions cannot reuse its slot.
+			if cleanupErr := removeWorktree(repoRoot, wtPath); cleanupErr != nil {
+				entry := WorktreeEntry{
+					Name:               name,
+					Path:               wtPath,
+					CreatedAt:          time.Now(),
+					Leased:             true,
+					LeaseHolder:        "quarantined: worktree seeding cleanup failed",
+					LeasedAt:           time.Now(),
+					SeededPaths:        seededPaths,
+					SeedInventoryKnown: true,
+				}
+				state.Worktrees = append(state.Worktrees, entry)
+				if writeErr := WriteState(poolDir, state); writeErr != nil {
+					return fmt.Errorf("failed to seed .worktreeinclude into %s: %w (cleanup failed: %v; quarantine failed: %v)", wtPath, err, cleanupErr, writeErr)
+				}
+				return fmt.Errorf("failed to seed .worktreeinclude into %s: %w (cleanup failed: %v)", wtPath, err, cleanupErr)
+			}
+			return fmt.Errorf("failed to seed .worktreeinclude into %s: %w", wtPath, err)
 		}
+		entry := WorktreeEntry{
+			Name:               name,
+			Path:               wtPath,
+			CreatedAt:          time.Now(),
+			Leased:             true,
+			LeaseHolder:        acquisitionIncompleteLeaseHolder,
+			LeasedAt:           time.Now(),
+			SeededPaths:        seededPaths,
+			SeedInventoryKnown: true,
+		}
+		state.Worktrees = append(state.Worktrees, entry)
+		if err := writeState(poolDir, state); err != nil {
+			return err
+		}
+
+		entry = state.Worktrees[len(state.Worktrees)-1]
+		clearLease(&entry)
 		if err := markAcquired(&entry, opts); err != nil {
 			return err
 		}
-		state.Worktrees = append(state.Worktrees, entry)
+		state.Worktrees[len(state.Worktrees)-1] = entry
 
 		acquired = leaseInfoFromEntry(entry)
-		if err := WriteState(poolDir, state); err != nil {
+		if err := writeState(poolDir, state); err != nil {
 			return err
 		}
 		runPostCreate = true
@@ -352,13 +434,22 @@ func ReleaseConditional(poolDir, worktreePath string, preconditions ReleasePreco
 		if err != nil {
 			return err
 		}
+		// Clearing a safety quarantine without a trusted seed inventory could
+		// expose ignored files hidden by a mutable manifest.
+		if !wt.SeedInventoryKnown && (wt.LeaseHolder == recoveredLeaseHolder || wt.LeaseHolder == acquisitionIncompleteLeaseHolder) {
+			return fmt.Errorf("worktree %s is quarantined without a trusted seed inventory; inspect it and use destroy --include-leased instead", worktreePath)
+		}
 		if beforeReset != nil {
 			if err := beforeReset(); err != nil {
 				return err
 			}
 		}
 		if !markerless {
-			if err := vcs.ResetWorktree(worktreePath, branch); err != nil {
+			seededPaths := wt.SeededPaths
+			if !wt.SeedInventoryKnown {
+				seededPaths = nil
+			}
+			if err := vcs.ResetWorktreeWithSeededPaths(worktreePath, branch, seededPaths); err != nil {
 				return err
 			}
 		}
@@ -366,6 +457,8 @@ func ReleaseConditional(poolDir, worktreePath string, preconditions ReleasePreco
 		wt.OwnerPID = 0
 		wt.OwnerStartedAt = 0
 		clearLease(wt)
+		wt.SeededPaths = nil
+		wt.SeedInventoryKnown = true
 		return WriteState(poolDir, state)
 	})
 }

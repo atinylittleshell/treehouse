@@ -186,6 +186,11 @@ func (b *Backend) AddWorktree(repoRoot, path, branch string) error {
 	return makeRepoPointerAbsolute(absPath)
 }
 
+// SeedWorktree is a no-op because jj has no Git ignore-based seed manifest.
+func (*Backend) SeedWorktree(repoRoot, worktreePath string) ([]string, error) {
+	return nil, nil
+}
+
 // makeRepoPointerAbsolute rewrites the workspace's .jj/repo store pointer to
 // an absolute, symlink-canonicalized path. jj writes a relative pointer,
 // which breaks when the pool directory and the repository do not move
@@ -305,6 +310,11 @@ func (b *Backend) ResetWorktree(worktreePath, branch string) error {
 	return b.ResetWorktreeToRef(worktreePath, ref, head, false)
 }
 
+// ResetWorktreeWithSeededPaths delegates because jj has no Git seed inventory.
+func (b *Backend) ResetWorktreeWithSeededPaths(worktreePath, branch string, seededPaths []string) error {
+	return b.ResetWorktree(worktreePath, branch)
+}
+
 // ResetWorktreeToRef resets worktreePath to an already resolved commit.
 // expectedHead is the working-copy commit recorded at check time.
 //
@@ -318,6 +328,7 @@ func (b *Backend) ResetWorktree(worktreePath, branch string) error {
 // before rebase/abandon so uncommitted working-copy changes that landed after
 // the caller's dirty check are not discarded.
 func (b *Backend) ResetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean bool) error {
+
 	// A sibling workspace may have moved the repo since this workspace was
 	// last used; recover first so the commands below see current state.
 	_, _ = runJJ(worktreePath, "workspace", "update-stale")
@@ -373,6 +384,12 @@ func (b *Backend) ResetWorktreeToRef(worktreePath, ref, expectedHead string, req
 	}
 	_, err = runJJ(worktreePath, "new", ref)
 	return err
+}
+
+// ResetWorktreeToRefWithSeededPaths delegates to the guarded reset because jj
+// workspaces never contain Git seed inventory.
+func (b *Backend) ResetWorktreeToRefWithSeededPaths(worktreePath, ref, expectedHead string, requireClean bool, seededPaths []string) error {
+	return b.ResetWorktreeToRef(worktreePath, ref, expectedHead, requireClean)
 }
 
 func (b *Backend) parkedOnRef(worktreePath, ref string) (bool, error) {

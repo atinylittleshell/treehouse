@@ -31,6 +31,13 @@ type WorktreeEntry struct {
 	LeaseHolder string `json:"lease_holder,omitempty"`
 	// LeasedAt records when the lease was taken.
 	LeasedAt time.Time `json:"leased_at,omitempty,omitzero"`
+	// SeededPaths is the trusted inventory of ignored files copied for this
+	// acquisition. It must live outside the mutable worktree so reset cannot be
+	// bypassed by changing or committing .worktreeinclude there.
+	SeededPaths []string `json:"seeded_paths,omitempty"`
+	// SeedInventoryKnown distinguishes a verified empty inventory from older
+	// state, which must retain the legacy manifest-based cleanup fallback.
+	SeedInventoryKnown bool `json:"seed_inventory_known,omitempty"`
 }
 
 func newLeaseID() (string, error) {
@@ -82,6 +89,56 @@ func ReadState(poolDir string) (State, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return recoverCorruptState(poolDir, err)
 	}
+	return recoverMissingStateEntries(poolDir, s)
+}
+
+// recoverMissingStateEntries covers the narrow window where creating a Git
+// worktree succeeds but persisting its quarantine entry fails. Such a worktree
+// must remain unavailable even though the otherwise-valid state file omits it.
+func recoverMissingStateEntries(poolDir string, s State) (State, error) {
+	known := make(map[string]bool, len(s.Worktrees))
+	for _, wt := range s.Worktrees {
+		known[filepath.Clean(wt.Path)] = true
+	}
+
+	slots, err := os.ReadDir(poolDir)
+	if err != nil {
+		return State{}, err
+	}
+	for _, slot := range slots {
+		if !slot.IsDir() {
+			continue
+		}
+		slotDir := filepath.Join(poolDir, slot.Name())
+		nested, err := os.ReadDir(slotDir)
+		if err != nil {
+			return State{}, fmt.Errorf("scanning pool slot %s: %w", slotDir, err)
+		}
+		for _, entry := range nested {
+			if !entry.IsDir() {
+				continue
+			}
+			wtPath := filepath.Join(slotDir, entry.Name())
+			if known[filepath.Clean(wtPath)] {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(wtPath, ".git")); err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return State{}, fmt.Errorf("inspecting untracked pool worktree %s: %w", wtPath, err)
+			}
+			now := time.Now()
+			s.Worktrees = append(s.Worktrees, WorktreeEntry{
+				Name:        slot.Name(),
+				Path:        wtPath,
+				CreatedAt:   now,
+				Leased:      true,
+				LeaseHolder: recoveredLeaseHolder,
+				LeasedAt:    now,
+			})
+		}
+	}
 	return s, nil
 }
 
@@ -95,9 +152,8 @@ const recoveredLeaseHolder = "recovered: state file was corrupt or truncated; ve
 // evidence alone cannot tell an idle spare from a live, process-independent
 // lease. Every recovered entry is therefore marked leased: Acquire and prune
 // skip it, and destroy only removes it via an explicit, single-target
-// --include-leased. A human clears the false lease with `treehouse status` to
-// see it and `treehouse return` (or `treehouse destroy --include-leased`) once
-// verified.
+// --include-leased. Return cannot safely clear the lease because recovery also
+// loses the trusted inventory of ignored files seeded into the worktree.
 func recoverCorruptState(poolDir string, parseErr error) (State, error) {
 	slots, err := os.ReadDir(poolDir)
 	if err != nil {
@@ -136,7 +192,7 @@ func recoverCorruptState(poolDir string, parseErr error) (State, error) {
 			})
 		}
 	}
-	fmt.Fprintf(os.Stderr, "treehouse: WARNING: state file %s is corrupt or truncated (%v); recovering from worktrees found on disk. They are marked leased until verified - see `treehouse status`, then `treehouse return` or `treehouse destroy --include-leased`.\n", stateFilePath(poolDir), parseErr)
+	fmt.Fprintf(os.Stderr, "treehouse: WARNING: state file %s is corrupt or truncated (%v); recovering from worktrees found on disk. They are marked leased because their seeded-file inventory is unknown - see `treehouse status`, then remove one with `treehouse destroy <path> --include-leased --yes`.\n", stateFilePath(poolDir), parseErr)
 	return State{Worktrees: recovered}, nil
 }
 

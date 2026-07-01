@@ -27,6 +27,26 @@ func TestWriteState_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestReadState_RecoversWorktreeMissingFromValidState(t *testing.T) {
+	poolDir := t.TempDir()
+	missingPath := makeFakeWorktree(t, poolDir, "1", "myrepo")
+	if err := WriteState(poolDir, State{}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Worktrees) != 1 {
+		t.Fatalf("ReadState returned %d entries, want recovered worktree", len(got.Worktrees))
+	}
+	entry := got.Worktrees[0]
+	if entry.Path != missingPath || !entry.Leased || entry.LeaseHolder != recoveredLeaseHolder {
+		t.Fatalf("missing worktree was not conservatively recovered: %#v", entry)
+	}
+}
+
 func TestReadState_LoadsPreIdentityLease(t *testing.T) {
 	poolDir := t.TempDir()
 	stateJSON := `{
