@@ -1,11 +1,15 @@
 # Treehouse configuration
-# Place repo-safe settings at <repo_root>/treehouse.toml.
+# Place repo-safe settings at <repo_root>/treehouse.toml or in an ancestor
+# directory below $HOME. The nearest file wins.
 # Place executable hooks only in ~/.config/treehouse/config.toml.
 
 # Maximum number of worktrees in the pool
 max_trees = 16
 
-# Lifecycle hooks are ignored in repo-level config for safety.
+# Relative roots are resolved from this file's directory.
+# root = "./"
+
+# Lifecycle hooks are ignored in repo-scoped config for safety.
 # Each list runs sequentially in the worktree directory via the OS shell.
 # Failures are logged and do not fail the operation.
 # [hooks]

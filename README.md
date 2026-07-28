@@ -301,7 +301,7 @@ Replace it with the specific `--include-*` flag(s) for the risk you actually int
 
 Create a repo config file with `treehouse init`, or add one manually:
 
-**Repo-level:** `treehouse.toml` in the repository root
+**Repo-scoped:** the nearest `treehouse.toml` from the repository root upward, stopping before `$HOME` or the filesystem root
 
 **User-level:** `~/.config/treehouse/config.toml`
 
@@ -311,19 +311,22 @@ max_trees = 16
 
 # Optional worktree root directory.
 # Empty uses $HOME/.treehouse.
-# Relative paths are resolved from the repo root for repo-scoped commands.
+# Relative paths in treehouse.toml are resolved from that file's directory.
 # Use an absolute user-level root for treehouse prune --all.
 # root = "$HOME/worktrees"
 ```
 
-The repo-level config takes precedence for repo-safe settings.
-`treehouse prune --all` can run without a repository, so it uses only the user-level config and does not read per-repo `treehouse.toml` files while sweeping.
+Treehouse selects one repo-scoped file: the nearest file wins, so a file in the repository root overrides a file in a parent context directory.
+This lets related repositories share operator settings from a file such as `~/Workspace/personal/treehouse.toml` while retaining repository-specific overrides.
+`treehouse init` always creates a file in the repository root.
+Repo-scoped config takes precedence for repo-safe settings, and hooks from it are ignored for safety.
+`treehouse prune --all` can run without a repository, so it uses only the user-level config and does not read repo-scoped `treehouse.toml` files while sweeping.
 If no config is found, the default pool size is 16.
 
 ### Hooks
 
 You can run commands automatically at worktree lifecycle points by adding a `[hooks]` section to the user-level config at `~/.config/treehouse/config.toml`.
-Hooks in repo-level `treehouse.toml` are ignored for safety.
+Hooks in repo-scoped `treehouse.toml` are ignored for safety.
 `treehouse destroy` always reads `pre_destroy` from the user-level config because it can target a pool by path.
 
 ```toml

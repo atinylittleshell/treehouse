@@ -29,14 +29,16 @@ func DefaultConfig() Config {
 func Load(repoRoot string) (Config, error) {
 	cfg := DefaultConfig()
 
-	repoPath := filepath.Join(repoRoot, "treehouse.toml")
-	hasRepoConfig := false
-	if _, err := os.Stat(repoPath); err == nil {
-		hasRepoConfig = true
+	repoPath, hasRepoConfig, err := findRepoConfig(repoRoot)
+	if err != nil {
+		return cfg, err
+	}
+	if hasRepoConfig {
 		if _, err := toml.DecodeFile(repoPath, &cfg); err != nil {
 			return cfg, err
 		}
 		cfg.Hooks = Hooks{}
+		cfg.Root = resolveRootFrom(cfg.Root, filepath.Dir(repoPath))
 	}
 
 	userCfg, hasUserConfig, err := loadUser()
@@ -52,6 +54,53 @@ func Load(repoRoot string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func findRepoConfig(repoRoot string) (string, bool, error) {
+	dir, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return "", false, err
+	}
+	dir = filepath.Clean(dir)
+
+	home := ""
+	if userHome, err := os.UserHomeDir(); err == nil {
+		if absoluteHome, err := filepath.Abs(userHome); err == nil {
+			home = filepath.Clean(absoluteHome)
+		}
+	}
+
+	for {
+		if dir == home {
+			return "", false, nil
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false, nil
+		}
+
+		path := filepath.Join(dir, "treehouse.toml")
+		if _, err := os.Stat(path); err == nil {
+			return path, true, nil
+		} else if !os.IsNotExist(err) {
+			return "", false, err
+		}
+
+		dir = parent
+	}
+}
+
+func resolveRootFrom(root string, dir string) string {
+	if root == "" {
+		return ""
+	}
+
+	expanded := os.ExpandEnv(root)
+	if filepath.IsAbs(expanded) {
+		return expanded
+	}
+	return filepath.Join(dir, expanded)
 }
 
 // LoadGlobal returns the default configuration merged with user-level config.

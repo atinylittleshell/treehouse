@@ -38,7 +38,7 @@ var initCmd = &cobra.Command{
 		}
 
 		// Append a comment showing the root option.
-		if _, err := f.WriteString("\n# Worktree root directory (relative to repo root or absolute path).\n# Worktrees are placed under {root}/.treehouse/. Default: $HOME\n# Example: root = \"./\"\n"); err != nil {
+		if _, err := f.WriteString("\n# Worktree root directory (relative to this file or absolute path).\n# Worktrees are placed under {root}/.treehouse/. Default: $HOME\n# Example: root = \"./\"\n"); err != nil {
 			return fmt.Errorf("failed to write config: %w", err)
 		}
 

@@ -895,7 +895,7 @@ func TestReturnExplicitPathFromLinkedWorktreePool(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoDir, "treehouse.toml"), []byte("root = \"../treehouse-pool\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gitCmd(t, repoDir, "add", "treehouse.toml")
+	gitCmd(t, repoDir, "add", "-f", "treehouse.toml")
 	gitCmd(t, repoDir, "commit", "-m", "configure treehouse root")
 
 	linkedDir := filepath.Join(filepath.Dir(repoDir), "agent-home")
@@ -1262,7 +1262,7 @@ func TestDestroyAllFromManagedWorktreeSubdirUsesMainRepoPool(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoDir, "treehouse.toml"), []byte("root = \"../treehouse-pool\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gitCmd(t, repoDir, "add", "treehouse.toml")
+	gitCmd(t, repoDir, "add", "-f", "treehouse.toml")
 	gitCmd(t, repoDir, "commit", "-m", "configure treehouse root")
 	gitCmd(t, repoDir, "push", "origin", "main")
 

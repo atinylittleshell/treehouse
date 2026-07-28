@@ -71,7 +71,8 @@ This project targets Linux, macOS, and Windows. All new code **must** work on Wi
 
 ## Config
 
-Place repo-safe settings in repo root `treehouse.toml` or user-level `~/.config/treehouse/config.toml`:
+Place repo-safe settings in `treehouse.toml` at the repo root or an ancestor below `$HOME`, or in user-level `~/.config/treehouse/config.toml`.
+The nearest repo-scoped file wins, and relative roots in it resolve from that file's directory:
 
 ```toml
 max_trees = 16
@@ -86,7 +87,7 @@ post_create = ["./scripts/setup-venv.sh"]
 pre_destroy = ["./scripts/teardown.sh"]
 ```
 
-Hooks are ignored in repo-level config for safety.
+Hooks are ignored in repo-scoped config for safety.
 
 ## Maintaining this file
 
