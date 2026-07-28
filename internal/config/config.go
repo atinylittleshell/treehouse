@@ -71,7 +71,7 @@ func findRepoConfig(repoRoot string) (string, bool, error) {
 	}
 
 	for {
-		if dir == home {
+		if samePath(dir, home) {
 			return "", false, nil
 		}
 
