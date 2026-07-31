@@ -26,7 +26,7 @@
             pname = "treehouse";
             inherit version;
             src = ./.;
-            vendorHash = "sha256-fH93/19rZY/jduF4ZS0RLrqBWdCjz6XYnoN+3KPd4Lg=";
+            vendorHash = "sha256-z8IndcHcZ6nLqhLtAYul3ppddpOA4AHGQWIlfYY/pfI=";
             ldflags = [
               "-X main.version=v${version}"
             ];
