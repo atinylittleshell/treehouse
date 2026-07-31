@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1](https://github.com/kunchenguid/treehouse/compare/v2.1.0...v2.1.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **ci:** suppress pull_request runs on release-please PRs ([#77](https://github.com/kunchenguid/treehouse/issues/77)) ([da7eda2](https://github.com/kunchenguid/treehouse/commit/da7eda26e5f26e0a1bf87a0d67e7553d72952cdf))
+
 ## [2.1.0](https://github.com/kunchenguid/treehouse/compare/v2.0.1...v2.1.0) (2026-07-20)
 
 
