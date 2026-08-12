@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"errors"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,8 +22,7 @@ import (
 var (
 	getLease       bool
 	getLeaseHolder string
-	getNoHerdr     bool
-	getNoFocus     bool
+	getJSON        bool
 )
 
 // errHerdrFallback signals that herdr-native spawning could not open a pane and
@@ -36,16 +35,11 @@ var getCmd = &cobra.Command{
 	Long: `Acquire a worktree from the pool and open a subshell in it.
 
 Pass --lease for a non-interactive, durable acquire: treehouse reserves the
-worktree, marks it leased in its persistent state, and prints only the worktree's
-absolute path to stdout (all banners go to stderr). A leased worktree is never
-handed out by a later get and never removed by prune, even with no process
-running inside it, until you release it with 'treehouse return <path>'.
-
-When treehouse runs inside the herdr terminal multiplexer (HERDR_ENV=1) and the
-herdr CLI is available, get opens the worktree in its own herdr pane and routes
-the agent there to the /herdr skill. The worktree still returns to the pool when
-you exit that pane. Pass --no-herdr (or set TREEHOUSE_NO_HERDR=1) to force the
-classic in-place subshell.`,
+worktree and marks it leased in persistent state. By default it prints only the
+absolute path to stdout; add --json for the lease identity and metadata. All
+banners go to stderr. A leased worktree is never handed out by a later get and
+never removed by prune, even with no process running inside it, until you release
+it with 'treehouse return <path>'.`,
 	RunE: getRunE,
 }
 
@@ -69,13 +63,16 @@ var holdCmd = &cobra.Command{
 func init() {
 	getCmd.Flags().BoolVar(&getLease, "lease", false, "Durably lease a worktree without opening a subshell; print only its path to stdout")
 	getCmd.Flags().StringVar(&getLeaseHolder, "lease-holder", "", "Optional label recorded as the lease holder (defaults to $TREEHOUSE_LEASE_HOLDER)")
-	getCmd.Flags().BoolVar(&getNoHerdr, "no-herdr", false, "Force a classic in-place subshell even when running inside herdr")
-	getCmd.Flags().BoolVar(&getNoFocus, "no-focus", false, "When opening a worktree in a herdr pane, do not move focus to the new pane")
+	getCmd.Flags().BoolVar(&getJSON, "json", false, "Print lease allocation as JSON (requires --lease)")
 	rootCmd.AddCommand(getCmd)
 	rootCmd.AddCommand(holdCmd)
 }
 
 func getRunE(cmd *cobra.Command, args []string) error {
+	if getJSON && !getLease {
+		return fmt.Errorf("--json requires --lease")
+	}
+
 	repoRoot, err := git.FindRepoRoot()
 	if err != nil {
 		return fmt.Errorf("not in a git repository: %w", err)
@@ -217,28 +214,27 @@ func holdAndReturn(wtPath, poolDir string) error {
 	return nil
 }
 
-// getLeaseRunE performs a non-interactive, durable acquire. It reserves a
-// worktree, marks it leased in persistent state, prints only the worktree path
-// to stdout, and routes every human-facing message to stderr so that
-// `path=$(treehouse get --lease)` works cleanly in scripts.
+// getLeaseRunE performs a non-interactive, durable acquire. It writes either the
+// worktree path or the requested JSON allocation to stdout and routes every
+// human-facing message to stderr, keeping both output modes machine-readable.
 func getLeaseRunE(repoRoot, poolDir string, cfg config.Config) error {
 	holder := getLeaseHolder
 	if holder == "" {
 		holder = os.Getenv("TREEHOUSE_LEASE_HOLDER")
 	}
 
-	wtPath, err := pool.AcquireLease(repoRoot, poolDir, cfg.MaxTrees, cfg.Hooks.PostCreate, holder)
+	lease, err := pool.AcquireLeaseInfo(repoRoot, poolDir, cfg.MaxTrees, cfg.Hooks.PostCreate, holder)
 	if err != nil {
 		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "🌳 Leased worktree at %s. Run 'treehouse return %s' to release it.\n",
-		ui.PrettyPath(wtPath), ui.PrettyPath(wtPath))
-	if herdr.IsRuntime() {
-		fmt.Fprintln(os.Stderr, herdr.RoutingMessage())
+		ui.PrettyPath(lease.Path), ui.PrettyPath(lease.Path))
+	if getJSON {
+		return json.NewEncoder(os.Stdout).Encode(lease)
 	}
 	// The bare path is the only thing on stdout, so callers can capture it.
-	fmt.Fprintln(os.Stdout, wtPath)
+	fmt.Fprintln(os.Stdout, lease.Path)
 	return nil
 }
 

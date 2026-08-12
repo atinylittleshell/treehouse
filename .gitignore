@@ -16,3 +16,4 @@ Thumbs.db
 
 # Test
 coverage.out
+.no-mistakes/evidence/

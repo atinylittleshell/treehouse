@@ -3,8 +3,15 @@ name: CI
 on:
   push:
     branches: [main]
+  # release-please opens its release PR with GITHUB_TOKEN, which creates a
+  # pull_request run that can only sit in action_required. Its output set is
+  # exactly these files, so excluding them means no run is ever created.
   pull_request:
     branches: [main]
+    paths-ignore:
+      - .release-please-manifest.json
+      - CHANGELOG.md
+      - flake.nix
 
 jobs:
   check:

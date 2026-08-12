@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.1.1](https://github.com/kunchenguid/treehouse/compare/v2.1.0...v2.1.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **ci:** suppress pull_request runs on release-please PRs ([#77](https://github.com/kunchenguid/treehouse/issues/77)) ([da7eda2](https://github.com/kunchenguid/treehouse/commit/da7eda26e5f26e0a1bf87a0d67e7553d72952cdf))
+
+## [2.1.0](https://github.com/kunchenguid/treehouse/compare/v2.0.1...v2.1.0) (2026-07-20)
+
+
+### Features
+
+* **pool:** add stable lease identities ([#68](https://github.com/kunchenguid/treehouse/issues/68)) ([e914cca](https://github.com/kunchenguid/treehouse/commit/e914cca93693be4c47e0a4df1bf7439afd5e820a))
+
+## [2.0.1](https://github.com/kunchenguid/treehouse/compare/v2.0.0...v2.0.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* **pool:** make state persistence atomic and recoverable ([#55](https://github.com/kunchenguid/treehouse/issues/55)) ([c76015d](https://github.com/kunchenguid/treehouse/commit/c76015d914e8ae7068c024c68c58860e10e8ee52))
+
 ## [2.0.0](https://github.com/kunchenguid/treehouse/compare/v1.8.0...v2.0.0) (2026-06-24)
 
 

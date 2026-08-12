@@ -2,9 +2,12 @@ name: update-vendor-hash
 
 on:
   pull_request:
+    # vendorHash tracks the Go module graph (go.mod / go.sum), not the
+    # release-please version bump in flake.nix. Keeping flake.nix out of
+    # this paths filter means release PRs create no run here.
     paths:
+      - go.mod
       - go.sum
-      - flake.nix
 
 permissions:
   contents: write

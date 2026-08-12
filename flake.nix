@@ -6,7 +6,7 @@
   outputs =
     { nixpkgs, ... }:
     let
-      version = "2.0.0"; # x-release-please-version
+      version = "2.1.1"; # x-release-please-version
       systems = [
         "aarch64-darwin"
         "x86_64-darwin"
@@ -26,7 +26,7 @@
             pname = "treehouse";
             inherit version;
             src = ./.;
-            vendorHash = "sha256-fH93/19rZY/jduF4ZS0RLrqBWdCjz6XYnoN+3KPd4Lg=";
+            vendorHash = "sha256-z8IndcHcZ6nLqhLtAYul3ppddpOA4AHGQWIlfYY/pfI=";
             ldflags = [
               "-X main.version=v${version}"
             ];

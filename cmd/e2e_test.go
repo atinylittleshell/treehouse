@@ -2,13 +2,35 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
+
+type leaseJSONResult struct {
+	Path        string    `json:"path"`
+	LeaseID     string    `json:"lease_id"`
+	LeaseHolder string    `json:"lease_holder"`
+	LeasedAt    time.Time `json:"leased_at"`
+}
+
+type statusJSONResult struct {
+	Name        string          `json:"name"`
+	Path        string          `json:"path"`
+	Status      string          `json:"status"`
+	LeaseID     string          `json:"lease_id"`
+	LeaseHolder string          `json:"lease_holder"`
+	LeasedAt    *time.Time      `json:"leased_at"`
+	Processes   json.RawMessage `json:"processes"`
+}
 
 var (
 	treehouseBin      string
@@ -400,6 +422,14 @@ func TestStatusEmptyPool(t *testing.T) {
 	if strings.Contains(stdout, "available") || strings.Contains(stdout, "in-use") {
 		t.Errorf("expected empty status, got stdout: %s", stdout)
 	}
+
+	stdout, stderr, code = runTreehouse(t, repoDir, homeDir, nil, "status", "--json")
+	if code != 0 {
+		t.Fatalf("treehouse status --json failed (code %d): %s", code, stderr)
+	}
+	if stdout != "[]\n" {
+		t.Fatalf("empty status --json = %q, want []", stdout)
+	}
 }
 
 func TestGetAndStatus(t *testing.T) {
@@ -496,6 +526,66 @@ func TestGetLeaseRecordsHolder(t *testing.T) {
 	}
 }
 
+func TestGetLeaseAndStatusJSONContracts(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+
+	leaseOut, leaseErr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease", "--lease-holder", "automation-A", "--json")
+	if code != 0 {
+		t.Fatalf("treehouse get --lease --json failed (code %d): %s", code, leaseErr)
+	}
+	var lease leaseJSONResult
+	if err := json.Unmarshal([]byte(leaseOut), &lease); err != nil {
+		t.Fatalf("get --lease --json returned invalid JSON %q: %v", leaseOut, err)
+	}
+	if !filepath.IsAbs(lease.Path) {
+		t.Fatalf("expected absolute lease path, got %q", lease.Path)
+	}
+	if lease.LeaseHolder != "automation-A" {
+		t.Fatalf("lease_holder = %q, want automation-A", lease.LeaseHolder)
+	}
+	decodedID, err := hex.DecodeString(lease.LeaseID)
+	if err != nil || len(decodedID) != 16 {
+		t.Fatalf("lease_id = %q, want 128-bit hexadecimal identity", lease.LeaseID)
+	}
+	if lease.LeasedAt.IsZero() {
+		t.Fatal("leased_at must be populated")
+	}
+
+	statusOut, statusErr, code := runTreehouse(t, repoDir, homeDir, nil, "status", "--json")
+	if code != 0 {
+		t.Fatalf("treehouse status --json failed (code %d): %s", code, statusErr)
+	}
+	var statuses []statusJSONResult
+	if err := json.Unmarshal([]byte(statusOut), &statuses); err != nil {
+		t.Fatalf("status --json returned invalid JSON %q: %v", statusOut, err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("status --json returned %d worktrees, want 1: %s", len(statuses), statusOut)
+	}
+	status := statuses[0]
+	if status.Path != lease.Path || status.Status != "leased" || status.LeaseID != lease.LeaseID || status.LeaseHolder != lease.LeaseHolder {
+		t.Fatalf("status lease metadata = %#v, want allocation %#v", status, lease)
+	}
+	if status.LeasedAt == nil || !status.LeasedAt.Equal(lease.LeasedAt) {
+		t.Fatalf("status leased_at = %v, want %v", status.LeasedAt, lease.LeasedAt)
+	}
+	if string(status.Processes) != "[]" {
+		t.Fatalf("status processes = %s, want []", status.Processes)
+	}
+}
+
+func TestGetJSONRequiresLease(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--json")
+	if code == 0 {
+		t.Fatalf("get --json without --lease succeeded: stdout=%q stderr=%q", stdout, stderr)
+	}
+	if !strings.Contains(stderr, "--json requires --lease") {
+		t.Fatalf("expected actionable --json error, got %q", stderr)
+	}
+}
+
 func TestLeasedWorktreeSkippedByGetAndPrune(t *testing.T) {
 	repoDir, homeDir := setupTestRepo(t)
 
@@ -536,10 +626,10 @@ func TestLeasedWorktreeSkippedByGetAndPrune(t *testing.T) {
 	}
 }
 
-func TestReturnReleasesLease(t *testing.T) {
+func TestReturnLegacyPathOnlyIgnoresStaleCallerHolder(t *testing.T) {
 	repoDir, homeDir := setupTestRepo(t)
 
-	leaseOut, leaseErr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease")
+	leaseOut, leaseErr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease", "--lease-holder", "holder-A")
 	if code != 0 {
 		t.Fatalf("get --lease failed (code %d): %s", code, leaseErr)
 	}
@@ -548,7 +638,7 @@ func TestReturnReleasesLease(t *testing.T) {
 		t.Fatal("could not capture leased worktree path")
 	}
 
-	_, returnErr, code := runTreehouse(t, repoDir, homeDir, nil, "return", leasedPath)
+	_, returnErr, code := runTreehouse(t, repoDir, homeDir, []string{"TREEHOUSE_LEASE_HOLDER=wrong-stale-caller"}, "return", leasedPath)
 	if code != 0 {
 		t.Fatalf("return failed (code %d): %s", code, returnErr)
 	}
@@ -577,6 +667,197 @@ func TestReturnReleasesLease(t *testing.T) {
 	reusedPath := extractWorktreePath(getErr, homeDir)
 	if reusedPath != leasedPath {
 		t.Fatalf("expected released worktree %s to be reused, got %s", leasedPath, reusedPath)
+	}
+}
+
+func TestReturnConditionalLeaseIdentityLifecycle(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	lease := acquireLeaseJSON(t, repoDir, homeDir, "holder-A")
+	poolDir := filepath.Dir(filepath.Dir(lease.Path))
+	statePath := filepath.Join(poolDir, "treehouse-state.json")
+
+	sentinel := filepath.Join(lease.Path, "must-survive-refusal.txt")
+	if err := os.WriteFile(sentinel, []byte("preserve\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stateBefore, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "return", "--force",
+		"--if-lease-id", lease.LeaseID, "--if-lease-holder", "wrong-holder", lease.Path)
+	if code == 0 || !strings.Contains(stderr, "lease holder does not match") {
+		t.Fatalf("wrong holder should refuse, code=%d stderr=%q", code, stderr)
+	}
+	assertReturnRefusalDidNotMutate(t, statePath, stateBefore, sentinel)
+
+	wrongID := strings.Repeat("0", len(lease.LeaseID))
+	if wrongID == lease.LeaseID {
+		wrongID = strings.Repeat("1", len(lease.LeaseID))
+	}
+	_, stderr, code = runTreehouse(t, repoDir, homeDir, nil, "return", "--force",
+		"--if-lease-id", wrongID, "--if-lease-holder", lease.LeaseHolder, lease.Path)
+	if code == 0 || !strings.Contains(stderr, "lease identity does not match") {
+		t.Fatalf("wrong identity should refuse, code=%d stderr=%q", code, stderr)
+	}
+	assertReturnRefusalDidNotMutate(t, statePath, stateBefore, sentinel)
+
+	_, stderr, code = runTreehouse(t, repoDir, homeDir, nil, "return", "--force",
+		"--if-lease-id", lease.LeaseID, "--if-lease-holder", lease.LeaseHolder, lease.Path)
+	if code != 0 || !strings.Contains(stderr, "Worktree returned to pool") {
+		t.Fatalf("correct conditional return failed, code=%d stderr=%q", code, stderr)
+	}
+	if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
+		t.Fatalf("correct return did not reset worktree, stat error: %v", err)
+	}
+
+	stateAfterRelease, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, code = runTreehouse(t, repoDir, homeDir, nil, "return", "--force", "--if-lease-id", lease.LeaseID, lease.Path)
+	if code == 0 || !strings.Contains(stderr, "is not leased") {
+		t.Fatalf("repeated release should refuse, code=%d stderr=%q", code, stderr)
+	}
+	stateAfterRepeat, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stateAfterRepeat, stateAfterRelease) {
+		t.Fatalf("repeated release mutated state:\nbefore: %s\nafter: %s", stateAfterRelease, stateAfterRepeat)
+	}
+
+	current := acquireLeaseJSON(t, repoDir, homeDir, "holder-A")
+	if current.Path != lease.Path {
+		t.Fatalf("expected same worktree path after reacquisition, got %s then %s", lease.Path, current.Path)
+	}
+	if current.LeaseID == lease.LeaseID {
+		t.Fatalf("same-holder reacquisition reused lease identity %q", current.LeaseID)
+	}
+	currentState, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, code = runTreehouse(t, repoDir, homeDir, nil, "return", "--force",
+		"--if-lease-id", lease.LeaseID, "--if-lease-holder", lease.LeaseHolder, lease.Path)
+	if code == 0 || !strings.Contains(stderr, "lease identity does not match") {
+		t.Fatalf("stale same-holder identity should refuse, code=%d stderr=%q", code, stderr)
+	}
+	stateAfterStale, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stateAfterStale, currentState) {
+		t.Fatalf("stale identity mutated current lease:\nbefore: %s\nafter: %s", currentState, stateAfterStale)
+	}
+
+	_, stderr, code = runTreehouse(t, repoDir, homeDir, nil, "return", "--force",
+		"--if-lease-id", current.LeaseID, "--if-lease-holder", current.LeaseHolder, current.Path)
+	if code != 0 {
+		t.Fatalf("current identity did not release, code=%d stderr=%q", code, stderr)
+	}
+}
+
+func TestReturnConditionalDirtyPromptDoesNotHoldPoolLock(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	lease := acquireLeaseJSON(t, repoDir, homeDir, "holder-A")
+	if err := os.WriteFile(filepath.Join(lease.Path, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	returnProcess := exec.Command(treehouseBin, "return", "--if-lease-id", lease.LeaseID, lease.Path)
+	returnProcess.Dir = repoDir
+	returnProcess.Env = buildEnv(homeDir)
+	stdin, err := returnProcess.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr, err := returnProcess.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := returnProcess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if returnProcess.ProcessState == nil {
+			_ = returnProcess.Process.Kill()
+			_ = returnProcess.Wait()
+		}
+	})
+
+	promptRead := make(chan error, 1)
+	go func() {
+		promptRead <- readUntilSuffix(stderr, "[Y/n] ")
+	}()
+	select {
+	case err := <-promptRead:
+		if err != nil {
+			t.Fatalf("failed to read return prompt: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("conditional return did not prompt")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	statusProcess := exec.CommandContext(ctx, treehouseBin, "status")
+	statusProcess.Dir = repoDir
+	statusProcess.Env = buildEnv(homeDir)
+	if output, err := statusProcess.CombinedOutput(); err != nil {
+		t.Fatalf("status blocked while return awaited confirmation: %v: %s", err, output)
+	}
+
+	if _, err := io.WriteString(stdin, "n\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := returnProcess.Wait(); err != nil {
+		t.Fatalf("aborted return failed: %v", err)
+	}
+}
+
+func readUntilSuffix(reader io.Reader, suffix string) error {
+	buffer := make([]byte, 0, len(suffix))
+	byteBuffer := make([]byte, 1)
+	for {
+		if _, err := io.ReadFull(reader, byteBuffer); err != nil {
+			return err
+		}
+		buffer = append(buffer, byteBuffer[0])
+		if bytes.HasSuffix(buffer, []byte(suffix)) {
+			return nil
+		}
+	}
+}
+
+func acquireLeaseJSON(t *testing.T, repoDir, homeDir, holder string) leaseJSONResult {
+	t.Helper()
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease", "--lease-holder", holder, "--json")
+	if code != 0 {
+		t.Fatalf("get --lease --json failed, code=%d stderr=%q", code, stderr)
+	}
+	var lease leaseJSONResult
+	if err := json.Unmarshal([]byte(stdout), &lease); err != nil {
+		t.Fatalf("invalid lease JSON %q: %v", stdout, err)
+	}
+	return lease
+}
+
+func assertReturnRefusalDidNotMutate(t *testing.T, statePath string, expectedState []byte, sentinel string) {
+	t.Helper()
+	stateAfter, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stateAfter, expectedState) {
+		t.Fatalf("refused return mutated state:\nbefore: %s\nafter: %s", expectedState, stateAfter)
+	}
+	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "preserve\n" {
+		t.Fatalf("refused return mutated worktree sentinel: data=%q err=%v", data, err)
 	}
 }
 
@@ -1394,7 +1675,15 @@ func TestPruneAllDoesNotDeleteOriginUnreachableWithPruneOrphans(t *testing.T) {
 	}
 }
 
-func TestPruneAllYesDoesNotPartiallyDeleteBeforePlanningAllPools(t *testing.T) {
+// TestPruneAllYesRecoversCorruptPoolWithoutDeletingItsWorktree covers the
+// treehouse-state-atomicity-b4 incident: a corrupt/truncated state file in one
+// pool (e.g. from a crash mid-write) must not brick `prune --all` for every
+// other pool, and the corrupt pool's own on-disk worktree must never be
+// silently deleted since its real reservation state is unknown. ReadState
+// recovers it as a leased worktree, which prune treats like any other
+// leased worktree: skipped, silently, pending human verification via
+// `treehouse status`.
+func TestPruneAllYesRecoversCorruptPoolWithoutDeletingItsWorktree(t *testing.T) {
 	repoA, homeDir := setupTestRepo(t)
 	repoB := setupTestRepoWithHome(t, homeDir, "zzrepo")
 	env := []string{"SHELL=" + exitShellBin}
@@ -1424,16 +1713,17 @@ func TestPruneAllYesDoesNotPartiallyDeleteBeforePlanningAllPools(t *testing.T) {
 
 	outsideDir := t.TempDir()
 	_, pruneErr, code := runTreehouseFromDir(t, repoA, outsideDir, homeDir, nil, "prune", "--all", "--yes")
-	if code == 0 {
-		t.Fatal("expected prune --all --yes to fail")
+	if code != 0 {
+		t.Fatalf("prune --all --yes should recover from the corrupt pool rather than fail (code %d): %s", code, pruneErr)
 	}
-	if !strings.Contains(pruneErr, "unexpected end of JSON input") {
-		t.Fatalf("expected corrupt state error, got stderr:\n%s", pruneErr)
+	if !strings.Contains(pruneErr, "corrupt or truncated") {
+		t.Fatalf("expected a recovery warning for the corrupt pool, got stderr:\n%s", pruneErr)
 	}
-	for _, wtPath := range []string{wtPathA, wtPathB} {
-		if _, err := os.Stat(wtPath); err != nil {
-			t.Fatalf("expected worktree to remain at %s: %v", wtPath, err)
-		}
+	if _, err := os.Stat(wtPathA); !os.IsNotExist(err) {
+		t.Fatalf("expected repo A's stale worktree to be pruned normally, stat err: %v", err)
+	}
+	if _, err := os.Stat(wtPathB); err != nil {
+		t.Fatalf("expected repo B's worktree to remain (its pool's state was corrupt): %v", err)
 	}
 }
 
@@ -1631,5 +1921,80 @@ func TestPruneUsesCurrentRemoteDefaultBranch(t *testing.T) {
 	}
 	if _, err := os.Stat(wtPath); err != nil {
 		t.Fatalf("worktree unmerged into current remote default was removed: %v", err)
+	}
+}
+
+func TestEnterByNameOpensSubshellWithoutChangingPool(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+
+	// exit-shell exits immediately so both get and enter return at once.
+	env := []string{"SHELL=" + exitShellBin}
+
+	if _, getErr, code := runTreehouse(t, repoDir, homeDir, env, "get"); code != 0 {
+		t.Fatalf("treehouse get failed (code %d): %s", code, getErr)
+	}
+
+	_, enterErr, code := runTreehouse(t, repoDir, homeDir, env, "enter", "1")
+	if code != 0 {
+		t.Fatalf("treehouse enter 1 failed (code %d): %s", code, enterErr)
+	}
+	if !strings.Contains(enterErr, "Entered worktree 1 at") {
+		t.Errorf("expected 'Entered worktree 1 at' in stderr: %s", enterErr)
+	}
+	if !strings.Contains(enterErr, "Pool state unchanged") {
+		t.Errorf("expected 'Pool state unchanged' in stderr: %s", enterErr)
+	}
+
+	// enter must not return the worktree to an acquired/leased state; it stays
+	// in the pool exactly as before.
+	statusOut, statusErr, code := runTreehouse(t, repoDir, homeDir, nil, "status")
+	if code != 0 {
+		t.Fatalf("treehouse status failed (code %d): %s", code, statusErr)
+	}
+	if !strings.Contains(statusOut, "1") {
+		t.Errorf("expected worktree 1 in status output: %s", statusOut)
+	}
+}
+
+func TestEnterUnknownNameFails(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+
+	env := []string{"SHELL=" + exitShellBin}
+	if _, getErr, code := runTreehouse(t, repoDir, homeDir, env, "get"); code != 0 {
+		t.Fatalf("treehouse get failed (code %d): %s", code, getErr)
+	}
+
+	_, enterErr, code := runTreehouse(t, repoDir, homeDir, env, "enter", "999")
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for unknown worktree name, got 0: %s", enterErr)
+	}
+	if !strings.Contains(enterErr, "no worktree named") {
+		t.Errorf("expected 'no worktree named' error in stderr: %s", enterErr)
+	}
+}
+
+func TestEnterPrintPathPrintsOnlyPathToStdout(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+
+	env := []string{"SHELL=" + exitShellBin}
+	if _, getErr, code := runTreehouse(t, repoDir, homeDir, env, "get"); code != 0 {
+		t.Fatalf("treehouse get failed (code %d): %s", code, getErr)
+	}
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, env, "enter", "--print-path", "1")
+	if code != 0 {
+		t.Fatalf("treehouse enter --print-path 1 failed (code %d): %s", code, stderr)
+	}
+
+	path := strings.TrimSpace(stdout)
+	if path == "" {
+		t.Fatalf("expected worktree path on stdout, got empty (stderr: %s)", stderr)
+	}
+	// Stdout must be exactly the path (one line) so command substitution is clean.
+	if strings.ContainsAny(path, "\n") || strings.Contains(stdout, "🌳") {
+		t.Errorf("expected only the bare path on stdout, got: %q", stdout)
+	}
+	if _, err := os.Stat(filepath.Join(path, "README.md")); err != nil {
+		t.Errorf("printed path is not a valid worktree: %s (%v)", path, err)
 	}
 }
