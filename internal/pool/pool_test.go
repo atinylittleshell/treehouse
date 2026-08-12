@@ -2318,3 +2318,98 @@ func quoteForShell(p string) string {
 	// Double-quote works in both sh and cmd.exe for paths without quotes.
 	return `"` + p + `"`
 }
+
+// gitOutput runs git in dir and returns its trimmed stdout, failing the test on error.
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// A worktree that is clean but holds committed, unlanded work (ahead of the
+// default branch) must not be destructively reset when its owner process is
+// gone. Availability is keyed on live-owner presence, but owner-process death
+// (a crash or reboot) does not make committed-but-unlanded work safe to discard.
+// Acquire must skip such a slot and hand out a different one instead, preserving
+// the unlanded commit.
+func TestAcquire_PreservesUnlandedWorkWhenOwnerIsDead(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+
+	wtPath, err := Acquire(repoDir, poolDir, 4, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+
+	// Commit unlanded work on the worktree, leaving a clean working tree so the
+	// dirty check alone would not protect it.
+	if err := os.WriteFile(filepath.Join(wtPath, "unlanded.txt"), []byte("precious\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, wtPath, "add", "unlanded.txt")
+	runGit(t, wtPath, "commit", "-m", "unlanded work")
+	unlandedSHA := gitOutput(t, wtPath, "rev-parse", "HEAD")
+
+	// Simulate the owning agent crashing or the host rebooting: the recorded
+	// owner PID no longer refers to the live owner, so the slot reads as
+	// available even though it still holds the work.
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatalf("ReadState failed: %v", err)
+	}
+	state.Worktrees[0].OwnerPID = 999999
+	if err := WriteState(poolDir, state); err != nil {
+		t.Fatalf("WriteState failed: %v", err)
+	}
+
+	next, err := Acquire(repoDir, poolDir, 4, nil)
+	if err != nil {
+		t.Fatalf("second Acquire failed: %v", err)
+	}
+	if next == wtPath {
+		t.Fatalf("Acquire reused the slot holding unlanded work (%s); it must be preserved", wtPath)
+	}
+
+	// The unlanded commit and its file must both survive untouched.
+	if got := gitOutput(t, wtPath, "rev-parse", "HEAD"); got != unlandedSHA {
+		t.Fatalf("unlanded worktree HEAD changed: expected %s, got %s (it was destructively reset)", unlandedSHA, got)
+	}
+	if _, err := os.Stat(filepath.Join(wtPath, "unlanded.txt")); err != nil {
+		t.Fatalf("unlanded file was destroyed: %v", err)
+	}
+}
+
+// The guard must not over-refuse: a clean, fully merged worktree whose owner is
+// gone is genuinely reclaimable and must still be reused (reset and handed out),
+// not needlessly preserved.
+func TestAcquire_ReusesCleanMergedWorktreeWhenOwnerIsDead(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+
+	wtPath, err := Acquire(repoDir, poolDir, 4, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+
+	// Owner is gone, but the worktree is clean and at the default branch: no
+	// unlanded work, so it is safe to reclaim.
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatalf("ReadState failed: %v", err)
+	}
+	state.Worktrees[0].OwnerPID = 999999
+	if err := WriteState(poolDir, state); err != nil {
+		t.Fatalf("WriteState failed: %v", err)
+	}
+
+	next, err := Acquire(repoDir, poolDir, 4, nil)
+	if err != nil {
+		t.Fatalf("second Acquire failed: %v", err)
+	}
+	if next != wtPath {
+		t.Fatalf("Acquire did not reuse the clean, merged, owner-dead slot: expected %s, got %s", wtPath, next)
+	}
+}

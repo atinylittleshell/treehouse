@@ -122,8 +122,13 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			if inUse {
 				continue
 			}
-			dirty, _ := git.IsDirty(wt.Path)
-			if dirty {
+			// Owner-process death does not make a slot safe to reuse. A crashed
+			// or rebooted agent can leave uncommitted changes or committed but
+			// unlanded work behind, and the reset below would discard it. Skip
+			// any slot that still holds work so the reset only ever runs on a
+			// clean, fully merged worktree; a slot whose state cannot be proven
+			// clean is preserved rather than reset.
+			if hasUnlandedWork(repoRoot, wt.Path) {
 				continue
 			}
 			// Found an available one — reset it
@@ -143,7 +148,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 
 		// No available worktree — create new if pool allows
 		if len(state.Worktrees) >= poolSize {
-			return fmt.Errorf("all %d worktrees are in use or dirty (max_trees = %d). Run 'treehouse status' to see details, or increase max_trees in treehouse.toml", len(state.Worktrees), poolSize)
+			return fmt.Errorf("all %d worktrees are in use, dirty, or hold unlanded work (max_trees = %d). Run 'treehouse status' to see details, or increase max_trees in treehouse.toml", len(state.Worktrees), poolSize)
 		}
 
 		name := nextName(state)
@@ -407,6 +412,24 @@ func ownerAlive(wt WorktreeEntry) bool {
 	}
 	startedAt, ok := process.StartedAt(wt.OwnerPID)
 	return ok && startedAt == wt.OwnerStartedAt
+}
+
+// hasUnlandedWork reports whether the worktree at wtPath holds work that a reset
+// would destroy: uncommitted changes (dirty), or commits that are not yet merged
+// into the default branch (ahead of base). Owner-process death alone never makes
+// such a slot safe to reuse. It fails closed: if either check cannot be
+// evaluated, the worktree is treated as holding work so a reclaim never
+// destructively resets a slot whose state cannot be proven clean.
+func hasUnlandedWork(repoRoot, wtPath string) bool {
+	dirty, err := git.IsDirty(wtPath)
+	if err != nil || dirty {
+		return true
+	}
+	merged, _, err := git.IsHeadMergedIntoDefault(repoRoot, wtPath)
+	if err != nil || !merged {
+		return true
+	}
+	return false
 }
 
 func reserveOwner(wt *WorktreeEntry) error {
