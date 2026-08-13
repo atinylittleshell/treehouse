@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/kunchenguid/treehouse/internal/git"
+	"github.com/kunchenguid/treehouse/v2/internal/git"
 )
 
 // EnsureGitignore adds treehouseDir to the .gitignore of the enclosing git
