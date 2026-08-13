@@ -103,15 +103,17 @@ func TestRemoveCleanWorktreeRejectsDirtyWorktree(t *testing.T) {
 
 func TestIsHeadMergedIntoRef(t *testing.T) {
 	tests := []struct {
-		name           string
-		ordinaryMerge  bool
-		squashMerge    bool
-		laterUnrelated bool
-		wantMerged     bool
+		name                 string
+		ordinaryMerge        bool
+		squashMerge          bool
+		laterUnrelated       bool
+		targetFeatureContent string
+		wantMerged           bool
 	}{
 		{name: "ordinary ancestry merge", ordinaryMerge: true, wantMerged: true},
 		{name: "squash merge", squashMerge: true, wantMerged: true},
 		{name: "squash merge followed by unrelated target commit", squashMerge: true, laterUnrelated: true, wantMerged: true},
+		{name: "squash merge missing final feature content", squashMerge: true, targetFeatureContent: "one\n", wantMerged: false},
 		{name: "unique unmerged content", wantMerged: false},
 	}
 
@@ -145,6 +147,12 @@ func TestIsHeadMergedIntoRef(t *testing.T) {
 				mustGit(t, repoDir, "merge", "--no-ff", "feature", "-m", "merge feature")
 			case tt.squashMerge:
 				mustGit(t, repoDir, "merge", "--squash", "feature")
+				if tt.targetFeatureContent != "" {
+					if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte(tt.targetFeatureContent), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					mustGit(t, repoDir, "add", "feature.txt")
+				}
 				mustGit(t, repoDir, "commit", "-m", "squash feature")
 			}
 			if tt.laterUnrelated {
