@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"os/exec"
@@ -257,7 +258,10 @@ func IsHeadMergedIntoDefault(repoRoot, worktreePath string) (bool, string, error
 	return merged, ref, err
 }
 
-// IsHeadMergedIntoRef reports whether worktreePath's HEAD is an ancestor of ref.
+// IsHeadMergedIntoRef reports whether worktreePath's HEAD is merged into ref.
+// Ancestry is the fast proof; when it is absent, a path-scoped tree comparison
+// detects a squash merge without treating unrelated target-branch changes as a
+// mismatch.
 func IsHeadMergedIntoRef(worktreePath, ref string) (bool, error) {
 	cmd := exec.Command("git", "merge-base", "--is-ancestor", "HEAD", ref)
 	cmd.Dir = worktreePath
@@ -266,9 +270,83 @@ func IsHeadMergedIntoRef(worktreePath, ref string) (bool, error) {
 		return true, nil
 	}
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-		return false, nil
+		return isHeadContentMergedIntoRef(worktreePath, ref)
 	}
 	return false, fmt.Errorf("git merge-base --is-ancestor HEAD %s: %s", ref, strings.TrimSpace(string(out)))
+}
+
+func isHeadContentMergedIntoRef(worktreePath, ref string) (bool, error) {
+	cmd := exec.Command("git", "merge-base", "HEAD", ref)
+	cmd.Dir = worktreePath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return false, fmt.Errorf("git merge-base HEAD %s returned no common ancestor", ref)
+		}
+		return false, fmt.Errorf("git merge-base HEAD %s: %s", ref, strings.TrimSpace(string(out)))
+	}
+	base := strings.TrimSpace(string(out))
+	if base == "" {
+		return false, fmt.Errorf("git merge-base HEAD %s returned no common ancestor", ref)
+	}
+
+	baseTree, err := readTree(worktreePath, base)
+	if err != nil {
+		return false, err
+	}
+	headTree, err := readTree(worktreePath, "HEAD")
+	if err != nil {
+		return false, err
+	}
+	targetTree, err := readTree(worktreePath, ref)
+	if err != nil {
+		return false, err
+	}
+
+	for path, baseEntry := range baseTree {
+		if baseEntry == headTree[path] {
+			continue
+		}
+		if headTree[path] != targetTree[path] {
+			return false, nil
+		}
+	}
+	for path, headEntry := range headTree {
+		if _, ok := baseTree[path]; ok {
+			continue
+		}
+		if headEntry != targetTree[path] {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func readTree(repoRoot, ref string) (map[string]string, error) {
+	out, err := runGitRaw(repoRoot, "ls-tree", "-r", "-z", "--full-tree", ref)
+	if err != nil {
+		return nil, err
+	}
+
+	tree := make(map[string]string)
+	for len(out) > 0 {
+		end := bytes.IndexByte(out, 0)
+		if end == -1 {
+			return nil, fmt.Errorf("git ls-tree %s returned malformed NUL-delimited output", ref)
+		}
+		record := out[:end]
+		out = out[end+1:]
+		separator := bytes.IndexByte(record, '\t')
+		if separator == -1 || separator == len(record)-1 {
+			return nil, fmt.Errorf("git ls-tree %s returned malformed tree entry", ref)
+		}
+		path := string(record[separator+1:])
+		if _, exists := tree[path]; exists {
+			return nil, fmt.Errorf("git ls-tree %s returned duplicate path %q", ref, path)
+		}
+		tree[path] = string(record[:separator])
+	}
+	return tree, nil
 }
 
 // IsDirty reports tracked or untracked changes, ignoring status.showUntrackedFiles.
@@ -286,6 +364,14 @@ func ShortHash(s string) string {
 }
 
 func runGit(dir string, args ...string) (string, error) {
+	out, err := runGitRaw(dir, args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func runGitRaw(dir string, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", args...)
 	if dir != "" {
 		cmd.Dir = dir
@@ -293,9 +379,9 @@ func runGit(dir string, args ...string) (string, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(exitErr.Stderr)))
+			return nil, fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(exitErr.Stderr)))
 		}
-		return "", err
+		return nil, err
 	}
-	return strings.TrimSpace(string(out)), nil
+	return out, nil
 }

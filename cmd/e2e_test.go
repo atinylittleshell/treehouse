@@ -1870,8 +1870,8 @@ func TestPruneRefreshesOriginBeforeMergeSafety(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("prune --yes failed after remote rewrite (code %d): %s", code, pruneErr)
 	}
-	if !strings.Contains(pruneOut, "not merged") {
-		t.Fatalf("expected stale local origin to be refreshed, got stdout:\n%s\nstderr:\n%s", pruneOut, pruneErr)
+	if !strings.Contains(pruneOut, "cannot verify") {
+		t.Fatalf("expected unrelated remote history to be unverified, got stdout:\n%s\nstderr:\n%s", pruneOut, pruneErr)
 	}
 	if _, err := os.Stat(wtPath); err != nil {
 		t.Fatalf("worktree with remotely unmerged HEAD was removed: %v", err)
@@ -1911,8 +1911,8 @@ func TestPruneUsesCurrentRemoteDefaultBranch(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("prune --yes failed after remote default rename (code %d): %s", code, pruneErr)
 	}
-	if !strings.Contains(pruneOut, "not merged") || !strings.Contains(pruneOut, "origin/trunk") {
-		t.Fatalf("expected prune to use current remote default, got stdout:\n%s\nstderr:\n%s", pruneOut, pruneErr)
+	if !strings.Contains(pruneOut, "cannot verify") {
+		t.Fatalf("expected prune to use current remote default and fail closed, got stdout:\n%s\nstderr:\n%s", pruneOut, pruneErr)
 	}
 	if _, err := os.Stat(wtPath); err != nil {
 		t.Fatalf("worktree unmerged into current remote default was removed: %v", err)
