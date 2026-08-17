@@ -789,7 +789,7 @@ func TestReturnSafeRequiresExactGuards(t *testing.T) {
 		})
 	}
 
-	_, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "return", "--safe",
+	_, stderr, code := runTreehouseFromDir(t, repoDir, lease.Path, homeDir, nil, "return", "--safe",
 		"--if-lease-id", lease.LeaseID, "--if-head", head, "--if-ref", ref, lease.Path)
 	if code != 0 || !strings.Contains(stderr, "Worktree returned to pool") {
 		t.Fatalf("safe return failed, code=%d stderr=%q", code, stderr)

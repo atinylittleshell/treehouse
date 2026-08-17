@@ -2,6 +2,7 @@ package process
 
 import (
 	"fmt"
+	"os"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -135,20 +136,25 @@ func FindProcessesInWorktreeStrict(worktreePath string) ([]ProcessInfo, error) {
 		return nil, err
 	}
 	probes := make([]processProbe, 0, len(procs))
+	currentPID := int32(os.Getpid())
 	for _, p := range procs {
-		if shouldSkipSystemProcess(runtime.GOOS, p.Pid) {
+		if shouldSkipProcess(runtime.GOOS, p.Pid, currentPID) {
 			continue
 		}
 		probes = append(probes, systemProcessProbe{process: p})
 	}
-	return findProcessesInWorktreeStrict(worktreePath, currentUser.Username, probes)
+	return findProcessesInWorktreeStrictForOS(worktreePath, currentUser.Username, runtime.GOOS, probes)
 }
 
-func shouldSkipSystemProcess(goos string, pid int32) bool {
-	return goos == "windows" && pid == 0
+func shouldSkipProcess(goos string, pid, currentPID int32) bool {
+	return pid == currentPID || (goos == "windows" && pid == 0)
 }
 
 func findProcessesInWorktreeStrict(worktreePath, currentUsername string, procs []processProbe) ([]ProcessInfo, error) {
+	return findProcessesInWorktreeStrictForOS(worktreePath, currentUsername, runtime.GOOS, procs)
+}
+
+func findProcessesInWorktreeStrictForOS(worktreePath, currentUsername, goos string, procs []processProbe) ([]ProcessInfo, error) {
 	absWorktree, err := filepath.Abs(worktreePath)
 	if err != nil {
 		return nil, err
@@ -157,28 +163,13 @@ func findProcessesInWorktreeStrict(worktreePath, currentUsername string, procs [
 
 	var result []ProcessInfo
 	for _, p := range procs {
-		statuses, err := p.Status()
-		if err != nil {
-			alive, aliveErr := p.Exists()
-			if aliveErr != nil {
-				return nil, aliveErr
-			}
-			if alive {
-				return nil, fmt.Errorf("inspect status for process %d: %w", p.PID(), err)
-			}
-			continue
-		}
-		if containsProcessStatus(statuses, process.Zombie) {
-			continue
-		}
-
 		username, err := p.Username()
 		if err != nil {
 			alive, aliveErr := p.Exists()
 			if aliveErr != nil {
 				return nil, aliveErr
 			}
-			if alive {
+			if alive && !isZombie(goos, p) {
 				return nil, fmt.Errorf("inspect owner for process %d: %w", p.PID(), err)
 			}
 			continue
@@ -193,7 +184,7 @@ func findProcessesInWorktreeStrict(worktreePath, currentUsername string, procs [
 			if aliveErr != nil {
 				return nil, aliveErr
 			}
-			if alive {
+			if alive && !isZombie(goos, p) {
 				return nil, fmt.Errorf("inspect cwd for process %d: %w", p.PID(), err)
 			}
 			continue
@@ -203,7 +194,7 @@ func findProcessesInWorktreeStrict(worktreePath, currentUsername string, procs [
 			if aliveErr != nil {
 				return nil, aliveErr
 			}
-			if alive {
+			if alive && !isZombie(goos, p) {
 				return nil, fmt.Errorf("inspect cwd for process %d: empty path", p.PID())
 			}
 			continue
@@ -219,6 +210,14 @@ func findProcessesInWorktreeStrict(worktreePath, currentUsername string, procs [
 		}
 	}
 	return result, nil
+}
+
+func isZombie(goos string, p processProbe) bool {
+	if goos == "windows" {
+		return false
+	}
+	statuses, err := p.Status()
+	return err == nil && containsProcessStatus(statuses, process.Zombie)
 }
 
 func containsProcessStatus(statuses []string, want string) bool {

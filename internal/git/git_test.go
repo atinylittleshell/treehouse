@@ -133,6 +133,41 @@ func TestIsDirtyFindsSubmoduleChangesHiddenByConfig(t *testing.T) {
 	}
 }
 
+func TestIsDirtyRejectsUnsafeIndexFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		flag string
+	}{
+		{name: "assume unchanged", flag: "--assume-unchanged"},
+		{name: "skip worktree", flag: "--skip-worktree"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoDir := t.TempDir()
+			mustGit(t, "", "init", "--initial-branch=main", repoDir)
+			mustGit(t, repoDir, "config", "user.email", "test@test.com")
+			mustGit(t, repoDir, "config", "user.name", "Test")
+			trackedPath := filepath.Join(repoDir, "tracked.txt")
+			if err := os.WriteFile(trackedPath, []byte("clean\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			mustGit(t, repoDir, "add", ".")
+			mustGit(t, repoDir, "commit", "-m", "initial")
+			mustGit(t, repoDir, "update-index", tc.flag, "tracked.txt")
+			if err := os.WriteFile(trackedPath, []byte("dirty\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			dirty, err := IsDirty(repoDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !dirty {
+				t.Fatalf("file with %s index flag was reported clean", tc.flag)
+			}
+		})
+	}
+}
+
 func TestValidateSafeReturnStateChecksExactHeadAttachment(t *testing.T) {
 	base := t.TempDir()
 	repoDir := filepath.Join(base, "repo")

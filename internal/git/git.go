@@ -395,11 +395,35 @@ func IsHeadMergedIntoRef(worktreePath, ref string) (bool, error) {
 
 // IsDirty reports tracked or untracked changes, ignoring status.showUntrackedFiles.
 func IsDirty(worktreePath string) (bool, error) {
+	unsafeFlags, err := hasUnsafeIndexFlags(worktreePath)
+	if err != nil {
+		return false, err
+	}
+	if unsafeFlags {
+		return true, nil
+	}
 	out, err := runGit(worktreePath, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
 	if err != nil {
 		return false, err
 	}
 	return out != "", nil
+}
+
+func hasUnsafeIndexFlags(worktreePath string) (bool, error) {
+	out, err := runGit(worktreePath, "ls-files", "-v", "-z")
+	if err != nil {
+		return false, err
+	}
+	for _, record := range strings.Split(out, "\x00") {
+		if record == "" {
+			continue
+		}
+		flag := record[0]
+		if flag == 'S' || (flag >= 'a' && flag <= 'z') {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func ShortHash(s string) string {

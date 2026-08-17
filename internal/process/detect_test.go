@@ -12,6 +12,7 @@ type fakeProcessProbe struct {
 	pid         int32
 	status      []string
 	statusErr   error
+	statusCalls *int
 	username    string
 	usernameErr error
 	cwd         string
@@ -21,8 +22,13 @@ type fakeProcessProbe struct {
 	existsErr   error
 }
 
-func (p fakeProcessProbe) PID() int32                { return p.pid }
-func (p fakeProcessProbe) Status() ([]string, error) { return p.status, p.statusErr }
+func (p fakeProcessProbe) PID() int32 { return p.pid }
+func (p fakeProcessProbe) Status() ([]string, error) {
+	if p.statusCalls != nil {
+		(*p.statusCalls)++
+	}
+	return p.status, p.statusErr
+}
 func (p fakeProcessProbe) Username() (string, error) { return p.username, p.usernameErr }
 func (p fakeProcessProbe) Cwd() (string, error)      { return p.cwd, p.cwdErr }
 func (p fakeProcessProbe) Name() (string, error)     { return p.name, nil }
@@ -37,13 +43,6 @@ func TestFindProcessesInWorktreeStrictFailsClosed(t *testing.T) {
 		probe fakeProcessProbe
 		want  string
 	}{
-		{
-			name: "status error",
-			probe: fakeProcessProbe{
-				pid: 0, statusErr: cwdErr, exists: true,
-			},
-			want: "access denied",
-		},
 		{
 			name: "empty cwd",
 			probe: fakeProcessProbe{
@@ -75,19 +74,23 @@ func TestFindProcessesInWorktreeStrictFailsClosed(t *testing.T) {
 	}
 }
 
-func TestShouldSkipWindowsIdleProcess(t *testing.T) {
-	if !shouldSkipSystemProcess("windows", 0) {
+func TestShouldSkipCurrentAndWindowsIdleProcesses(t *testing.T) {
+	if !shouldSkipProcess("windows", 0, 42) {
 		t.Fatal("Windows idle process should be excluded from user-process inspection")
 	}
+	if !shouldSkipProcess("darwin", 42, 42) {
+		t.Fatal("current process should be excluded from user-process inspection")
+	}
 	for _, tc := range []struct {
-		goos string
-		pid  int32
+		goos       string
+		pid        int32
+		currentPID int32
 	}{
-		{goos: "windows", pid: 1},
-		{goos: "linux", pid: 0},
-		{goos: "darwin", pid: 0},
+		{goos: "windows", pid: 1, currentPID: 42},
+		{goos: "linux", pid: 0, currentPID: 42},
+		{goos: "darwin", pid: 0, currentPID: 42},
 	} {
-		if shouldSkipSystemProcess(tc.goos, tc.pid) {
+		if shouldSkipProcess(tc.goos, tc.pid, tc.currentPID) {
 			t.Fatalf("unexpected system-process exclusion for %s pid %d", tc.goos, tc.pid)
 		}
 	}
@@ -96,7 +99,10 @@ func TestShouldSkipWindowsIdleProcess(t *testing.T) {
 func TestFindProcessesInWorktreeStrictSkipsVanishedAndOtherUserProcesses(t *testing.T) {
 	worktree := t.TempDir()
 	probes := []processProbe{
-		fakeProcessProbe{pid: 0, status: []string{"zombie"}, exists: true},
+		fakeProcessProbe{
+			pid: 0, status: []string{"zombie"}, username: "ravi",
+			cwdErr: errors.New("defunct"), exists: true,
+		},
 		fakeProcessProbe{pid: 1, usernameErr: errors.New("gone"), exists: false},
 		fakeProcessProbe{pid: 2, username: "other", cwd: worktree, exists: true},
 	}
@@ -116,12 +122,14 @@ func TestFindProcessesInWorktreeStrictFindsChildDirectory(t *testing.T) {
 	if err := os.Mkdir(child, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	statusCalls := 0
 	probe := fakeProcessProbe{
-		pid:      42,
-		username: "ravi",
-		cwd:      child,
-		name:     "agent",
-		exists:   true,
+		pid:         42,
+		username:    "ravi",
+		cwd:         child,
+		name:        "agent",
+		exists:      true,
+		statusCalls: &statusCalls,
 	}
 
 	got, err := findProcessesInWorktreeStrict(worktree, "ravi", []processProbe{probe})
@@ -130,5 +138,32 @@ func TestFindProcessesInWorktreeStrictFindsChildDirectory(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].PID != 42 {
 		t.Fatalf("strict scan = %v, want pid 42", got)
+	}
+	if statusCalls != 0 {
+		t.Fatalf("normal process scan called Status %d times", statusCalls)
+	}
+}
+
+func TestFindProcessesInWorktreeStrictDoesNotCallStatusOnWindows(t *testing.T) {
+	worktree := t.TempDir()
+	statusCalls := 0
+	probe := fakeProcessProbe{
+		pid:         42,
+		statusErr:   errors.New("not implemented"),
+		statusCalls: &statusCalls,
+		username:    "ravi",
+		cwd:         t.TempDir(),
+		exists:      true,
+	}
+
+	got, err := findProcessesInWorktreeStrictForOS(worktree, "ravi", "windows", []processProbe{probe})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("strict Windows scan found outside process: %v", got)
+	}
+	if statusCalls != 0 {
+		t.Fatalf("Windows process scan called Status %d times", statusCalls)
 	}
 }
