@@ -159,6 +159,63 @@ func TestSafeRepositoryStateIgnoresGitRepositoryEnvironment(t *testing.T) {
 	}
 }
 
+func TestSafeRepositoryStateDoesNotDiscoverParentRepository(t *testing.T) {
+	base := t.TempDir()
+	parent := filepath.Join(base, "parent")
+	target := filepath.Join(parent, "target")
+	for _, repo := range []string{parent, target} {
+		mustGit(t, "", "init", "--initial-branch=main", repo)
+		mustGit(t, repo, "config", "user.email", "test@test.com")
+		mustGit(t, repo, "config", "user.name", "Test")
+		if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("clean\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mustGit(t, repo, "add", ".")
+		mustGit(t, repo, "commit", "-m", "initial")
+	}
+	if err := os.RemoveAll(filepath.Join(target, ".git")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := validateSafeRepositoryState(target); err == nil ||
+		!strings.Contains(err.Error(), "inspect safe Git marker") {
+		t.Fatalf("safe state without target .git marker = %v, want refusal", err)
+	}
+}
+
+func TestSafeReturnRejectsCopiedLinkedWorktreeMarker(t *testing.T) {
+	base := t.TempDir()
+	repoDir := filepath.Join(base, "repo")
+	first := filepath.Join(base, "first")
+	second := filepath.Join(base, "second")
+	mustGit(t, "", "init", "--initial-branch=main", repoDir)
+	mustGit(t, repoDir, "config", "user.email", "test@test.com")
+	mustGit(t, repoDir, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(repoDir, "tracked.txt"), []byte("clean\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, repoDir, "add", ".")
+	mustGit(t, repoDir, "commit", "-m", "initial")
+	mustGit(t, repoDir, "worktree", "add", "--detach", first, "main")
+	mustGit(t, repoDir, "worktree", "add", "--detach", second, "main")
+	head, err := runGit(first, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secondMarker, err := os.ReadFile(filepath.Join(second, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(first, ".git"), secondMarker, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateSafeReturnState(first, head, "refs/heads/main"); err == nil ||
+		!strings.Contains(err.Error(), "safe Git backlink mismatch") {
+		t.Fatalf("safe return with copied worktree marker = %v, want backlink refusal", err)
+	}
+}
+
 func TestSanitizeGitEnvironment(t *testing.T) {
 	got := sanitizeGitEnvironment([]string{
 		"PATH=/usr/bin",

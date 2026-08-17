@@ -187,94 +187,127 @@ func DetachWorktree(worktreePath string) error {
 	return err
 }
 
+type SafeReturnIdentity string
+
 func ValidateSafeReturnState(worktreePath, expectedHead, expectedRef string) error {
+	_, err := ValidateSafeReturnStateWithIdentity(worktreePath, expectedHead, expectedRef)
+	return err
+}
+
+func ValidateSafeReturnStateWithIdentity(
+	worktreePath, expectedHead, expectedRef string,
+) (SafeReturnIdentity, error) {
 	if err := validateCommitOID(expectedHead); err != nil {
-		return err
+		return "", err
 	}
 	if err := validateSafeReturnRef(expectedRef); err != nil {
-		return err
+		return "", err
 	}
 
-	head, err := runGit(worktreePath, "rev-parse", "--verify", "HEAD^{commit}")
+	repository, err := openSafeGitRepository(worktreePath)
 	if err != nil {
-		return err
+		return "", err
+	}
+	head, err := repository.run("rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return "", err
 	}
 	if head != expectedHead {
-		return fmt.Errorf("worktree HEAD changed: expected %s, got %s", expectedHead, head)
+		return "", fmt.Errorf("worktree HEAD changed: expected %s, got %s", expectedHead, head)
 	}
 
-	if _, symbolic, err := symbolicRef(worktreePath, expectedRef); err != nil {
-		return err
+	if _, symbolic, err := repository.symbolicRef(expectedRef); err != nil {
+		return "", err
 	} else if symbolic {
-		return fmt.Errorf("safe return ref must not be symbolic: %s", expectedRef)
+		return "", fmt.Errorf("safe return ref must not be symbolic: %s", expectedRef)
 	}
-	refHead, err := runGit(worktreePath, "rev-parse", "--verify", expectedRef+"^{commit}")
+	refHead, err := repository.run("rev-parse", "--verify", expectedRef+"^{commit}")
 	if err != nil {
-		return err
+		return "", err
 	}
 	if refHead != expectedHead {
-		return fmt.Errorf("ref %s changed: expected %s, got %s", expectedRef, expectedHead, refHead)
+		return "", fmt.Errorf("ref %s changed: expected %s, got %s", expectedRef, expectedHead, refHead)
 	}
 
-	symbolicHead, attached, err := symbolicHead(worktreePath)
+	symbolicHead, attached, err := repository.symbolicRef("HEAD")
 	if err != nil {
-		return err
+		return "", err
 	}
 	switch {
 	case strings.HasPrefix(expectedRef, "refs/heads/") && attached && symbolicHead != expectedRef:
-		return fmt.Errorf("worktree HEAD is not attached to %s", expectedRef)
+		return "", fmt.Errorf("worktree HEAD is not attached to %s", expectedRef)
 	case strings.HasPrefix(expectedRef, "refs/remotes/origin/") && attached:
-		return fmt.Errorf("worktree HEAD must be detached for remote ref %s", expectedRef)
+		return "", fmt.Errorf("worktree HEAD must be detached for remote ref %s", expectedRef)
 	}
 
-	if err := validateSafeRepositoryState(worktreePath); err != nil {
-		return err
+	identity, err := validateSafeRepository(repository)
+	if err != nil {
+		return "", err
 	}
-	return nil
+	return identity, nil
 }
 
 func validateSafeRepositoryState(worktreePath string) error {
-	paths := []string{worktreePath}
-	submodules, err := initializedSubmodulePaths(worktreePath)
+	root, err := openSafeGitRepository(worktreePath)
 	if err != nil {
 		return err
 	}
-	paths = append(paths, submodules...)
-	for _, path := range paths {
+	_, err = validateSafeRepository(root)
+	return err
+}
+
+func validateSafeRepository(root safeGitRepository) (SafeReturnIdentity, error) {
+	repositories := []safeGitRepository{root}
+	submodules, err := initializedSubmoduleRepositories(root)
+	if err != nil {
+		return "", err
+	}
+	repositories = append(repositories, submodules...)
+	identityParts := make([]string, 0, len(repositories)*2)
+	for _, repository := range repositories {
+		identityParts = append(identityParts, repository.worktreePath, repository.gitDir)
 		label := "worktree"
-		if path != worktreePath {
-			relative, err := filepath.Rel(worktreePath, path)
+		if repository.worktreePath != root.worktreePath {
+			relative, err := filepath.Rel(root.worktreePath, repository.worktreePath)
 			if err != nil {
-				return err
+				return "", err
 			}
 			label = "submodule " + relative
 		}
-		operation, err := OperationInProgress(path)
+		operation, err := operationInProgress(repository)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if operation != "" {
-			return fmt.Errorf("%s has %s in progress", label, operation)
+			return "", fmt.Errorf("%s has %s in progress", label, operation)
 		}
-		unsafeFlags, err := hasUnsafeIndexFlags(path)
+		unsafeFlags, err := hasUnsafeIndexFlags(repository)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if unsafeFlags {
-			return fmt.Errorf("%s has assume-unchanged or skip-worktree index flags", label)
+			return "", fmt.Errorf("%s has assume-unchanged or skip-worktree index flags", label)
 		}
-		dirty, err := IsDirty(path)
+		dirty, err := repository.isDirty()
 		if err != nil {
-			return err
+			return "", err
 		}
 		if dirty {
-			return fmt.Errorf("%s has uncommitted changes", label)
+			return "", fmt.Errorf("%s has uncommitted changes", label)
 		}
 	}
-	return nil
+	return SafeReturnIdentity(strings.Join(identityParts, "\x00")), nil
 }
 
 func OperationInProgress(worktreePath string) (string, error) {
+	repository, err := openSafeGitRepository(worktreePath)
+	if err != nil {
+		return "", err
+	}
+	return operationInProgress(repository)
+}
+
+func operationInProgress(repository safeGitRepository) (string, error) {
 	operations := []struct {
 		path string
 		name string
@@ -288,12 +321,12 @@ func OperationInProgress(worktreePath string) (string, error) {
 		{path: "sequencer", name: "sequencer"},
 	}
 	for _, operation := range operations {
-		path, err := runGit(worktreePath, "rev-parse", "--git-path", operation.path)
+		path, err := repository.run("rev-parse", "--git-path", operation.path)
 		if err != nil {
 			return "", err
 		}
 		if !filepath.IsAbs(path) {
-			path = filepath.Join(worktreePath, path)
+			path = filepath.Join(repository.worktreePath, path)
 		}
 		if _, err := os.Stat(path); err == nil {
 			return operation.name, nil
@@ -327,12 +360,8 @@ func validateSafeReturnRef(ref string) error {
 	return nil
 }
 
-func symbolicHead(worktreePath string) (string, bool, error) {
-	return symbolicRef(worktreePath, "HEAD")
-}
-
-func symbolicRef(worktreePath, ref string) (string, bool, error) {
-	cmd := gitCommand(worktreePath, "symbolic-ref", "-q", ref)
+func (repository safeGitRepository) symbolicRef(ref string) (string, bool, error) {
+	cmd := repository.command("symbolic-ref", "-q", ref)
 	out, err := cmd.Output()
 	if err == nil {
 		return strings.TrimSpace(string(out)), true, nil
@@ -420,7 +449,8 @@ func IsHeadMergedIntoDefault(repoRoot, worktreePath string) (bool, string, error
 
 // IsHeadMergedIntoRef reports whether worktreePath's HEAD is an ancestor of ref.
 func IsHeadMergedIntoRef(worktreePath, ref string) (bool, error) {
-	cmd := gitCommand(worktreePath, "merge-base", "--is-ancestor", "HEAD", ref)
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", "HEAD", ref)
+	cmd.Dir = worktreePath
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return true, nil
@@ -440,8 +470,8 @@ func IsDirty(worktreePath string) (bool, error) {
 	return out != "", nil
 }
 
-func hasUnsafeIndexFlags(worktreePath string) (bool, error) {
-	cmd := gitCommand(worktreePath, "ls-files", "-v", "-z")
+func hasUnsafeIndexFlags(repository safeGitRepository) (bool, error) {
+	cmd := repository.command("ls-files", "-v", "-z")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return false, err
@@ -477,12 +507,12 @@ func hasUnsafeIndexFlags(worktreePath string) (bool, error) {
 	return false, nil
 }
 
-func initializedSubmodulePaths(worktreePath string) ([]string, error) {
-	out, err := runGitRaw(worktreePath, "ls-files", "--stage", "-z")
+func initializedSubmoduleRepositories(repository safeGitRepository) ([]safeGitRepository, error) {
+	out, err := repository.runRaw("ls-files", "--stage", "-z")
 	if err != nil {
 		return nil, err
 	}
-	var result []string
+	var result []safeGitRepository
 	for _, rawRecord := range bytes.Split(out, []byte{0}) {
 		if len(rawRecord) == 0 {
 			continue
@@ -496,17 +526,18 @@ func initializedSubmodulePaths(worktreePath string) ([]string, error) {
 			relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 			return nil, fmt.Errorf("invalid submodule path %q", rawPath)
 		}
-		path := filepath.Join(worktreePath, relative)
+		path := filepath.Join(repository.worktreePath, relative)
 		if _, err := os.Stat(filepath.Join(path, ".git")); os.IsNotExist(err) {
 			continue
 		} else if err != nil {
 			return nil, err
 		}
-		if _, err := runGit(path, "rev-parse", "--is-inside-work-tree"); err != nil {
+		submodule, err := openSafeGitRepository(path)
+		if err != nil {
 			return nil, err
 		}
-		result = append(result, path)
-		nested, err := initializedSubmodulePaths(path)
+		result = append(result, submodule)
+		nested, err := initializedSubmoduleRepositories(submodule)
 		if err != nil {
 			return nil, err
 		}
@@ -526,7 +557,10 @@ func runGit(dir string, args ...string) (string, error) {
 }
 
 func runGitRaw(dir string, args ...string) ([]byte, error) {
-	cmd := gitCommand(dir, args...)
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -537,14 +571,218 @@ func runGitRaw(dir string, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-func gitCommand(dir string, args ...string) *exec.Cmd {
-	commandArgs := args
-	if dir != "" {
-		commandArgs = append([]string{"-C", dir}, args...)
+type safeGitRepository struct {
+	worktreePath string
+	gitDir       string
+}
+
+func openSafeGitRepository(worktreePath string) (safeGitRepository, error) {
+	canonicalWorktree, err := canonicalPath(worktreePath)
+	if err != nil {
+		return safeGitRepository{}, err
 	}
+	worktreeInfo, err := os.Stat(canonicalWorktree)
+	if err != nil {
+		return safeGitRepository{}, err
+	}
+	if !worktreeInfo.IsDir() {
+		return safeGitRepository{}, fmt.Errorf("safe Git worktree is not a directory: %s", canonicalWorktree)
+	}
+
+	marker := filepath.Join(canonicalWorktree, ".git")
+	markerInfo, err := os.Lstat(marker)
+	if err != nil {
+		return safeGitRepository{}, fmt.Errorf("inspect safe Git marker: %w", err)
+	}
+	var gitDir string
+	switch {
+	case markerInfo.IsDir():
+		gitDir = marker
+	case markerInfo.Mode().IsRegular():
+		if markerInfo.Size() > 4096 {
+			return safeGitRepository{}, fmt.Errorf("safe Git marker is too large")
+		}
+		content, err := os.ReadFile(marker)
+		if err != nil {
+			return safeGitRepository{}, err
+		}
+		value := strings.TrimSpace(string(content))
+		if strings.ContainsAny(value, "\r\n") {
+			return safeGitRepository{}, fmt.Errorf("safe Git marker has invalid content")
+		}
+		value, ok := strings.CutPrefix(value, "gitdir: ")
+		if !ok || value == "" {
+			return safeGitRepository{}, fmt.Errorf("safe Git marker has invalid content")
+		}
+		if filepath.IsAbs(value) {
+			gitDir = value
+		} else {
+			gitDir = filepath.Join(canonicalWorktree, value)
+		}
+	default:
+		return safeGitRepository{}, fmt.Errorf("safe Git marker must be a directory or regular file")
+	}
+	canonicalGitDir, err := canonicalPath(gitDir)
+	if err != nil {
+		return safeGitRepository{}, err
+	}
+	gitDirInfo, err := os.Stat(canonicalGitDir)
+	if err != nil {
+		return safeGitRepository{}, err
+	}
+	if !gitDirInfo.IsDir() {
+		return safeGitRepository{}, fmt.Errorf("safe Git directory is not a directory: %s", canonicalGitDir)
+	}
+
+	repository := safeGitRepository{
+		worktreePath: canonicalWorktree,
+		gitDir:       canonicalGitDir,
+	}
+	if markerInfo.Mode().IsRegular() {
+		if err := repository.validateExternalGitDirOwner(marker); err != nil {
+			return safeGitRepository{}, err
+		}
+	}
+	topLevel, err := repository.run("rev-parse", "--show-toplevel")
+	if err != nil {
+		return safeGitRepository{}, err
+	}
+	canonicalTopLevel, err := canonicalPath(topLevel)
+	if err != nil {
+		return safeGitRepository{}, err
+	}
+	if canonicalTopLevel != canonicalWorktree {
+		return safeGitRepository{}, fmt.Errorf(
+			"safe Git worktree root mismatch: expected %s, got %s",
+			canonicalWorktree,
+			canonicalTopLevel,
+		)
+	}
+	absoluteGitDir, err := repository.run("rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return safeGitRepository{}, err
+	}
+	canonicalReportedGitDir, err := canonicalPath(absoluteGitDir)
+	if err != nil {
+		return safeGitRepository{}, err
+	}
+	if canonicalReportedGitDir != canonicalGitDir {
+		return safeGitRepository{}, fmt.Errorf(
+			"safe Git directory mismatch: expected %s, got %s",
+			canonicalGitDir,
+			canonicalReportedGitDir,
+		)
+	}
+	return repository, nil
+}
+
+func (repository safeGitRepository) validateExternalGitDirOwner(marker string) error {
+	backlink := filepath.Join(repository.gitDir, "gitdir")
+	backlinkInfo, err := os.Lstat(backlink)
+	switch {
+	case err == nil:
+		if !backlinkInfo.Mode().IsRegular() || backlinkInfo.Size() > 4096 {
+			return fmt.Errorf("safe Git backlink must be a small regular file")
+		}
+		content, err := os.ReadFile(backlink)
+		if err != nil {
+			return err
+		}
+		value := strings.TrimSpace(string(content))
+		if value == "" || strings.ContainsAny(value, "\r\n") {
+			return fmt.Errorf("safe Git backlink has invalid content")
+		}
+		if !filepath.IsAbs(value) {
+			value = filepath.Join(repository.gitDir, value)
+		}
+		canonicalBacklink, err := canonicalPath(value)
+		if err != nil {
+			return err
+		}
+		canonicalMarker, err := canonicalPath(marker)
+		if err != nil {
+			return err
+		}
+		if canonicalBacklink != canonicalMarker {
+			return fmt.Errorf(
+				"safe Git backlink mismatch: expected %s, got %s",
+				canonicalMarker,
+				canonicalBacklink,
+			)
+		}
+		return nil
+	case !os.IsNotExist(err):
+		return err
+	}
+
+	cmd := repository.command("config", "--local", "--no-includes", "--get", "core.worktree")
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("safe external Git directory has no worktree owner")
+	}
+	value := strings.TrimSpace(string(out))
+	if value == "" || strings.ContainsAny(value, "\r\n") {
+		return fmt.Errorf("safe Git core.worktree has invalid content")
+	}
+	if !filepath.IsAbs(value) {
+		value = filepath.Join(repository.gitDir, value)
+	}
+	canonicalOwner, err := canonicalPath(value)
+	if err != nil {
+		return err
+	}
+	if canonicalOwner != repository.worktreePath {
+		return fmt.Errorf(
+			"safe Git worktree owner mismatch: expected %s, got %s",
+			repository.worktreePath,
+			canonicalOwner,
+		)
+	}
+	return nil
+}
+
+func canonicalPath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(absolute)
+}
+
+func (repository safeGitRepository) command(args ...string) *exec.Cmd {
+	commandArgs := []string{
+		"--git-dir=" + repository.gitDir,
+		"--work-tree=" + repository.worktreePath,
+	}
+	commandArgs = append(commandArgs, args...)
 	cmd := exec.Command("git", commandArgs...)
+	cmd.Dir = repository.worktreePath
 	cmd.Env = sanitizeGitEnvironment(os.Environ())
 	return cmd
+}
+
+func (repository safeGitRepository) run(args ...string) (string, error) {
+	out, err := repository.runRaw(args...)
+	return strings.TrimSpace(string(out)), err
+}
+
+func (repository safeGitRepository) runRaw(args ...string) ([]byte, error) {
+	out, err := repository.command(args...).Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return nil, err
+	}
+	return out, nil
+}
+
+func (repository safeGitRepository) isDirty() (bool, error) {
+	out, err := repository.run("status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
+	if err != nil {
+		return false, err
+	}
+	return out != "", nil
 }
 
 func sanitizeGitEnvironment(environment []string) []string {

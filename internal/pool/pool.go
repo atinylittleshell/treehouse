@@ -312,15 +312,20 @@ func releaseSafe(poolDir, worktreePath string, preconditions SafeReleasePrecondi
 			return err
 		}
 
-		if err := validateSafeReleaseState(worktreePath, preconditions); err != nil {
+		firstIdentity, err := validateSafeReleaseState(worktreePath, preconditions)
+		if err != nil {
 			return err
 		}
 		if afterFirstValidation != nil {
 			afterFirstValidation()
 		}
 		// Recheck after a full scan because Git and process state do not share the pool lock.
-		if err := validateSafeReleaseState(worktreePath, preconditions); err != nil {
+		secondIdentity, err := validateSafeReleaseState(worktreePath, preconditions)
+		if err != nil {
 			return err
+		}
+		if secondIdentity != firstIdentity {
+			return fmt.Errorf("Git repository identity changed during safe release")
 		}
 
 		wt.OwnerPID = 0
@@ -330,25 +335,26 @@ func releaseSafe(poolDir, worktreePath string, preconditions SafeReleasePrecondi
 	})
 }
 
-func validateSafeReleaseState(worktreePath string, preconditions SafeReleasePreconditions) error {
-	if err := git.ValidateSafeReturnState(worktreePath, preconditions.ExpectedHEAD, preconditions.ExpectedRef); err != nil {
-		return err
-	}
-	dirty, err := git.IsDirty(worktreePath)
+func validateSafeReleaseState(
+	worktreePath string,
+	preconditions SafeReleasePreconditions,
+) (git.SafeReturnIdentity, error) {
+	identity, err := git.ValidateSafeReturnStateWithIdentity(
+		worktreePath,
+		preconditions.ExpectedHEAD,
+		preconditions.ExpectedRef,
+	)
 	if err != nil {
-		return err
-	}
-	if dirty {
-		return fmt.Errorf("worktree has uncommitted changes")
+		return "", err
 	}
 	processes, err := process.FindProcessesInWorktreeStrict(worktreePath)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if len(processes) > 0 {
-		return fmt.Errorf("worktree has active processes: %v", processes)
+		return "", fmt.Errorf("worktree has active processes: %v", processes)
 	}
-	return nil
+	return identity, nil
 }
 
 func releasableWorktree(state *State, worktreePath string, preconditions ReleasePreconditions) (*WorktreeEntry, error) {

@@ -1928,6 +1928,48 @@ func TestReleaseSafe_ClearsOnlyMatchingCleanIdleLease(t *testing.T) {
 	}
 }
 
+func TestReleaseSafe_IgnoresGitRepositoryEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("safe process inspection is not supported on Windows")
+	}
+	repoDir, poolDir := setupRepo(t)
+	lease, err := AcquireLeaseInfo(repoDir, poolDir, 1, nil, "automation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := gitOutput(t, lease.Path, "rev-parse", "HEAD")
+
+	decoy := t.TempDir()
+	runGit(t, decoy, "init", "--initial-branch=main")
+	runGit(t, decoy, "config", "user.email", "test@test.com")
+	runGit(t, decoy, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(decoy, "tracked.txt"), []byte("clean\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, decoy, "add", ".")
+	runGit(t, decoy, "commit", "-m", "initial")
+	if err := os.WriteFile(filepath.Join(decoy, "tracked.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+	t.Setenv("GIT_WORK_TREE", decoy)
+
+	if err := ReleaseSafe(poolDir, lease.Path, SafeReleasePreconditions{
+		ExpectedLeaseID: lease.LeaseID,
+		ExpectedHEAD:    head,
+		ExpectedRef:     "refs/remotes/origin/main",
+	}); err != nil {
+		t.Fatalf("ReleaseSafe failed with redirected Git environment: %v", err)
+	}
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Worktrees) != 1 || state.Worktrees[0].Leased {
+		t.Fatalf("safe release did not clear lease: %#v", state.Worktrees)
+	}
+}
+
 func TestReleaseSafe_RefusesChangedOrUnsafeWorktree(t *testing.T) {
 	tests := []struct {
 		name   string
