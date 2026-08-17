@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/shirou/gopsutil/v4/process"
@@ -16,6 +17,7 @@ type ProcessInfo struct {
 
 type processProbe interface {
 	PID() int32
+	Status() ([]string, error)
 	Username() (string, error)
 	Cwd() (string, error)
 	Name() (string, error)
@@ -28,6 +30,10 @@ type systemProcessProbe struct {
 
 func (p systemProcessProbe) PID() int32 {
 	return p.process.Pid
+}
+
+func (p systemProcessProbe) Status() ([]string, error) {
+	return p.process.Status()
 }
 
 func (p systemProcessProbe) Username() (string, error) {
@@ -130,9 +136,16 @@ func FindProcessesInWorktreeStrict(worktreePath string) ([]ProcessInfo, error) {
 	}
 	probes := make([]processProbe, 0, len(procs))
 	for _, p := range procs {
+		if shouldSkipSystemProcess(runtime.GOOS, p.Pid) {
+			continue
+		}
 		probes = append(probes, systemProcessProbe{process: p})
 	}
 	return findProcessesInWorktreeStrict(worktreePath, currentUser.Username, probes)
+}
+
+func shouldSkipSystemProcess(goos string, pid int32) bool {
+	return goos == "windows" && pid == 0
 }
 
 func findProcessesInWorktreeStrict(worktreePath, currentUsername string, procs []processProbe) ([]ProcessInfo, error) {
@@ -144,6 +157,21 @@ func findProcessesInWorktreeStrict(worktreePath, currentUsername string, procs [
 
 	var result []ProcessInfo
 	for _, p := range procs {
+		statuses, err := p.Status()
+		if err != nil {
+			alive, aliveErr := p.Exists()
+			if aliveErr != nil {
+				return nil, aliveErr
+			}
+			if alive {
+				return nil, fmt.Errorf("inspect status for process %d: %w", p.PID(), err)
+			}
+			continue
+		}
+		if containsProcessStatus(statuses, process.Zombie) {
+			continue
+		}
+
 		username, err := p.Username()
 		if err != nil {
 			alive, aliveErr := p.Exists()
@@ -191,6 +219,15 @@ func findProcessesInWorktreeStrict(worktreePath, currentUsername string, procs [
 		}
 	}
 	return result, nil
+}
+
+func containsProcessStatus(statuses []string, want string) bool {
+	for _, status := range statuses {
+		if status == want {
+			return true
+		}
+	}
+	return false
 }
 
 func pathContains(parent, child string) bool {

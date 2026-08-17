@@ -218,7 +218,7 @@ func ValidateSafeReturnState(worktreePath, expectedHead, expectedRef string) err
 		return err
 	}
 	switch {
-	case strings.HasPrefix(expectedRef, "refs/heads/") && (!attached || symbolicHead != expectedRef):
+	case strings.HasPrefix(expectedRef, "refs/heads/") && attached && symbolicHead != expectedRef:
 		return fmt.Errorf("worktree HEAD is not attached to %s", expectedRef)
 	case strings.HasPrefix(expectedRef, "refs/remotes/origin/") && attached:
 		return fmt.Errorf("worktree HEAD must be detached for remote ref %s", expectedRef)
@@ -395,7 +395,7 @@ func IsHeadMergedIntoRef(worktreePath, ref string) (bool, error) {
 
 // IsDirty reports tracked or untracked changes, ignoring status.showUntrackedFiles.
 func IsDirty(worktreePath string) (bool, error) {
-	out, err := runGit(worktreePath, "status", "--porcelain", "--untracked-files=all")
+	out, err := runGit(worktreePath, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
 	if err != nil {
 		return false, err
 	}

@@ -237,7 +237,9 @@ treehouse return --safe \
   "$path"
 ```
 
-Safe return requires an explicit path and all three conditions. It checks the lease, HEAD, branch attachment, Git operation state, tracked and untracked changes, and current-user processes while holding the pool lock. It fails closed on inspection errors. A successful safe return only clears the lease; it does not terminate processes, reset HEAD, or remove files. `--if-ref` accepts only `refs/heads/...` for an attached HEAD or `refs/remotes/origin/...` for a detached HEAD.
+Safe return requires an explicit path and all three conditions. It checks the lease, HEAD, branch identity, Git operation state, tracked and untracked changes, and current-user processes while holding the pool lock. It fails closed on inspection errors. A successful safe return only clears the lease; it does not terminate processes, reset HEAD, or remove files. `--if-ref` accepts `refs/heads/...` for an attached or detached HEAD and `refs/remotes/origin/...` for a detached HEAD.
+
+The Git and process checks run twice, but they cannot lock out an external process that does not cooperate with treehouse. Such a process can change the worktree after the final check. Use `--safe` only for worktrees that automation already expects to be quiescent. The exact lease identity prevents the command from releasing a later acquisition of the same path.
 
 For backward compatibility, `treehouse return <path>` without either condition keeps its original unconditional path-only behavior. Existing path-only scripts and `treehouse get --lease` stdout are unchanged.
 

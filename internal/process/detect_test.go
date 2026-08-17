@@ -10,6 +10,8 @@ import (
 
 type fakeProcessProbe struct {
 	pid         int32
+	status      []string
+	statusErr   error
 	username    string
 	usernameErr error
 	cwd         string
@@ -20,6 +22,7 @@ type fakeProcessProbe struct {
 }
 
 func (p fakeProcessProbe) PID() int32                { return p.pid }
+func (p fakeProcessProbe) Status() ([]string, error) { return p.status, p.statusErr }
 func (p fakeProcessProbe) Username() (string, error) { return p.username, p.usernameErr }
 func (p fakeProcessProbe) Cwd() (string, error)      { return p.cwd, p.cwdErr }
 func (p fakeProcessProbe) Name() (string, error)     { return p.name, nil }
@@ -34,6 +37,13 @@ func TestFindProcessesInWorktreeStrictFailsClosed(t *testing.T) {
 		probe fakeProcessProbe
 		want  string
 	}{
+		{
+			name: "status error",
+			probe: fakeProcessProbe{
+				pid: 0, statusErr: cwdErr, exists: true,
+			},
+			want: "access denied",
+		},
 		{
 			name: "empty cwd",
 			probe: fakeProcessProbe{
@@ -65,9 +75,28 @@ func TestFindProcessesInWorktreeStrictFailsClosed(t *testing.T) {
 	}
 }
 
+func TestShouldSkipWindowsIdleProcess(t *testing.T) {
+	if !shouldSkipSystemProcess("windows", 0) {
+		t.Fatal("Windows idle process should be excluded from user-process inspection")
+	}
+	for _, tc := range []struct {
+		goos string
+		pid  int32
+	}{
+		{goos: "windows", pid: 1},
+		{goos: "linux", pid: 0},
+		{goos: "darwin", pid: 0},
+	} {
+		if shouldSkipSystemProcess(tc.goos, tc.pid) {
+			t.Fatalf("unexpected system-process exclusion for %s pid %d", tc.goos, tc.pid)
+		}
+	}
+}
+
 func TestFindProcessesInWorktreeStrictSkipsVanishedAndOtherUserProcesses(t *testing.T) {
 	worktree := t.TempDir()
 	probes := []processProbe{
+		fakeProcessProbe{pid: 0, status: []string{"zombie"}, exists: true},
 		fakeProcessProbe{pid: 1, usernameErr: errors.New("gone"), exists: false},
 		fakeProcessProbe{pid: 2, username: "other", cwd: worktree, exists: true},
 	}

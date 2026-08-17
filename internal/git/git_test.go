@@ -101,6 +101,38 @@ func TestRemoveCleanWorktreeRejectsDirtyWorktree(t *testing.T) {
 	}
 }
 
+func TestIsDirtyFindsSubmoduleChangesHiddenByConfig(t *testing.T) {
+	base := t.TempDir()
+	childRepo := filepath.Join(base, "child")
+	mustGit(t, "", "init", "--initial-branch=main", childRepo)
+	mustGit(t, childRepo, "config", "user.email", "test@test.com")
+	mustGit(t, childRepo, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(childRepo, "tracked.txt"), []byte("clean\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, childRepo, "add", ".")
+	mustGit(t, childRepo, "commit", "-m", "initial")
+
+	repoDir := filepath.Join(base, "repo")
+	mustGit(t, "", "init", "--initial-branch=main", repoDir)
+	mustGit(t, repoDir, "config", "user.email", "test@test.com")
+	mustGit(t, repoDir, "config", "user.name", "Test")
+	mustGit(t, repoDir, "-c", "protocol.file.allow=always", "submodule", "add", childRepo, "child")
+	mustGit(t, repoDir, "commit", "-am", "add child")
+	mustGit(t, repoDir, "config", "submodule.child.ignore", "all")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "child", "tracked.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dirty, err := IsDirty(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dirty {
+		t.Fatal("dirty submodule hidden by config was reported clean")
+	}
+}
+
 func TestValidateSafeReturnStateChecksExactHeadAttachment(t *testing.T) {
 	base := t.TempDir()
 	repoDir := filepath.Join(base, "repo")
@@ -117,6 +149,19 @@ func TestValidateSafeReturnStateChecksExactHeadAttachment(t *testing.T) {
 	if err := ValidateSafeReturnState(repoDir, head, "refs/heads/main"); err != nil {
 		t.Fatalf("attached local ref should validate: %v", err)
 	}
+	mustGit(t, repoDir, "branch", "other", head)
+	mustGit(t, repoDir, "checkout", "other")
+	if err := ValidateSafeReturnState(repoDir, head, "refs/heads/main"); err == nil ||
+		!strings.Contains(err.Error(), "is not attached") {
+		t.Fatalf("mismatched attached local ref error = %v, want attachment refusal", err)
+	}
+	mustGit(t, repoDir, "checkout", "main")
+	mustGit(t, repoDir, "checkout", "--detach", head)
+	if err := ValidateSafeReturnState(repoDir, head, "refs/heads/main"); err != nil {
+		t.Fatalf("detached local ref should validate: %v", err)
+	}
+	mustGit(t, repoDir, "checkout", "main")
+
 	mustGit(t, repoDir, "update-ref", "refs/remotes/origin/main", head)
 	if err := ValidateSafeReturnState(repoDir, head, "refs/remotes/origin/main"); err == nil ||
 		!strings.Contains(err.Error(), "must be detached") {
@@ -132,9 +177,8 @@ func TestValidateSafeReturnStateChecksExactHeadAttachment(t *testing.T) {
 		!strings.Contains(err.Error(), "must not be symbolic") {
 		t.Fatalf("symbolic remote ref error = %v, want symbolic refusal", err)
 	}
-	if err := ValidateSafeReturnState(repoDir, head, "refs/heads/main"); err == nil ||
-		!strings.Contains(err.Error(), "is not attached") {
-		t.Fatalf("detached local ref error = %v, want attached refusal", err)
+	if err := ValidateSafeReturnState(repoDir, head, "refs/heads/main"); err != nil {
+		t.Fatalf("detached local ref should remain valid with origin refs: %v", err)
 	}
 }
 
