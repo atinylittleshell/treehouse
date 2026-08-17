@@ -332,8 +332,7 @@ func symbolicHead(worktreePath string) (string, bool, error) {
 }
 
 func symbolicRef(worktreePath, ref string) (string, bool, error) {
-	cmd := exec.Command("git", "symbolic-ref", "-q", ref)
-	cmd.Dir = worktreePath
+	cmd := gitCommand(worktreePath, "symbolic-ref", "-q", ref)
 	out, err := cmd.Output()
 	if err == nil {
 		return strings.TrimSpace(string(out)), true, nil
@@ -421,8 +420,7 @@ func IsHeadMergedIntoDefault(repoRoot, worktreePath string) (bool, string, error
 
 // IsHeadMergedIntoRef reports whether worktreePath's HEAD is an ancestor of ref.
 func IsHeadMergedIntoRef(worktreePath, ref string) (bool, error) {
-	cmd := exec.Command("git", "merge-base", "--is-ancestor", "HEAD", ref)
-	cmd.Dir = worktreePath
+	cmd := gitCommand(worktreePath, "merge-base", "--is-ancestor", "HEAD", ref)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return true, nil
@@ -443,8 +441,7 @@ func IsDirty(worktreePath string) (bool, error) {
 }
 
 func hasUnsafeIndexFlags(worktreePath string) (bool, error) {
-	cmd := exec.Command("git", "ls-files", "-v", "-z")
-	cmd.Dir = worktreePath
+	cmd := gitCommand(worktreePath, "ls-files", "-v", "-z")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return false, err
@@ -529,10 +526,7 @@ func runGit(dir string, args ...string) (string, error) {
 }
 
 func runGitRaw(dir string, args ...string) ([]byte, error) {
-	cmd := exec.Command("git", args...)
-	if dir != "" {
-		cmd.Dir = dir
-	}
+	cmd := gitCommand(dir, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -541,4 +535,49 @@ func runGitRaw(dir string, args ...string) ([]byte, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func gitCommand(dir string, args ...string) *exec.Cmd {
+	commandArgs := args
+	if dir != "" {
+		commandArgs = append([]string{"-C", dir}, args...)
+	}
+	cmd := exec.Command("git", commandArgs...)
+	cmd.Env = sanitizeGitEnvironment(os.Environ())
+	return cmd
+}
+
+func sanitizeGitEnvironment(environment []string) []string {
+	blocked := map[string]bool{
+		"GIT_ALTERNATE_OBJECT_DIRECTORIES": true,
+		"GIT_CEILING_DIRECTORIES":          true,
+		"GIT_COMMON_DIR":                   true,
+		"GIT_CONFIG":                       true,
+		"GIT_CONFIG_COUNT":                 true,
+		"GIT_CONFIG_GLOBAL":                true,
+		"GIT_CONFIG_NOSYSTEM":              true,
+		"GIT_CONFIG_PARAMETERS":            true,
+		"GIT_CONFIG_SYSTEM":                true,
+		"GIT_DIR":                          true,
+		"GIT_DISCOVERY_ACROSS_FILESYSTEM":  true,
+		"GIT_INDEX_FILE":                   true,
+		"GIT_NAMESPACE":                    true,
+		"GIT_OBJECT_DIRECTORY":             true,
+		"GIT_QUARANTINE_PATH":              true,
+		"GIT_REPLACE_REF_BASE":             true,
+		"GIT_SHALLOW_FILE":                 true,
+		"GIT_WORK_TREE":                    true,
+	}
+	result := make([]string, 0, len(environment))
+	for _, entry := range environment {
+		name, _, _ := strings.Cut(entry, "=")
+		upperName := strings.ToUpper(name)
+		if blocked[upperName] ||
+			strings.HasPrefix(upperName, "GIT_CONFIG_KEY_") ||
+			strings.HasPrefix(upperName, "GIT_CONFIG_VALUE_") {
+			continue
+		}
+		result = append(result, entry)
+	}
+	return result
 }

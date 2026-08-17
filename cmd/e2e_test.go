@@ -791,6 +791,12 @@ func TestReturnSafeRequiresExactGuards(t *testing.T) {
 
 	_, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "return", "--safe",
 		"--if-lease-id", lease.LeaseID, "--if-head", head, "--if-ref", ref, lease.Path)
+	if runtime.GOOS == "windows" {
+		if code == 0 || !strings.Contains(stderr, "safe process inspection is not supported on Windows") {
+			t.Fatalf("Windows safe return should be unsupported, code=%d stderr=%q", code, stderr)
+		}
+		return
+	}
 	if code != 0 || !strings.Contains(stderr, "Worktree returned to pool") {
 		t.Fatalf("safe return failed, code=%d stderr=%q", code, stderr)
 	}

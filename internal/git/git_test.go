@@ -133,6 +133,54 @@ func TestIsDirtyFindsSubmoduleChangesHiddenByConfig(t *testing.T) {
 	}
 }
 
+func TestSafeRepositoryStateIgnoresGitRepositoryEnvironment(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	decoy := filepath.Join(base, "decoy")
+	for _, repo := range []string{target, decoy} {
+		mustGit(t, "", "init", "--initial-branch=main", repo)
+		mustGit(t, repo, "config", "user.email", "test@test.com")
+		mustGit(t, repo, "config", "user.name", "Test")
+		if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("clean\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mustGit(t, repo, "add", ".")
+		mustGit(t, repo, "commit", "-m", "initial")
+	}
+	if err := os.WriteFile(filepath.Join(target, "tracked.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+	t.Setenv("GIT_WORK_TREE", decoy)
+	if err := validateSafeRepositoryState(target); err == nil ||
+		!strings.Contains(err.Error(), "worktree has uncommitted changes") {
+		t.Fatalf("safe state with redirected Git environment = %v, want dirty refusal", err)
+	}
+}
+
+func TestSanitizeGitEnvironment(t *testing.T) {
+	got := sanitizeGitEnvironment([]string{
+		"PATH=/usr/bin",
+		"GIT_DIR=/tmp/decoy",
+		"git_work_tree=/tmp/decoy",
+		"GIT_CONFIG_KEY_0=core.worktree",
+		"GIT_CONFIG_VALUE_0=/tmp/decoy",
+		"GIT_SSH_COMMAND=ssh -i key",
+	})
+	joined := strings.Join(got, "\n")
+	for _, blocked := range []string{"GIT_DIR=", "git_work_tree=", "GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"} {
+		if strings.Contains(joined, blocked) {
+			t.Fatalf("sanitized environment retained %q: %v", blocked, got)
+		}
+	}
+	for _, retained := range []string{"PATH=/usr/bin", "GIT_SSH_COMMAND=ssh -i key"} {
+		if !strings.Contains(joined, retained) {
+			t.Fatalf("sanitized environment removed %q: %v", retained, got)
+		}
+	}
+}
+
 func TestSafeRepositoryStateRecursesIntoSubmodules(t *testing.T) {
 	base := t.TempDir()
 	deepRepo := filepath.Join(base, "deep-source")

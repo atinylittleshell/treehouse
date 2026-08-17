@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1897,6 +1898,9 @@ func TestRelease_PreIdentityLeaseFailsConditionalAndAllowsLegacyReturn(t *testin
 }
 
 func TestReleaseSafe_ClearsOnlyMatchingCleanIdleLease(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("safe process inspection is not supported on Windows")
+	}
 	repoDir, poolDir := setupRepo(t)
 	lease, err := AcquireLeaseInfo(repoDir, poolDir, 1, nil, "automation")
 	if err != nil {
@@ -2005,6 +2009,9 @@ func TestReleaseSafe_RefusesChangedOrUnsafeWorktree(t *testing.T) {
 }
 
 func TestReleaseSafe_RefusesActiveProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("safe process inspection is not supported on Windows")
+	}
 	repoDir, poolDir := setupRepo(t)
 	lease, err := AcquireLeaseInfo(repoDir, poolDir, 1, nil, "automation")
 	if err != nil {
@@ -2027,6 +2034,9 @@ func TestReleaseSafe_RefusesActiveProcess(t *testing.T) {
 }
 
 func TestReleaseSafe_RechecksExternalStateBeforeClearingLease(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("safe process inspection is not supported on Windows")
+	}
 	tests := []struct {
 		name   string
 		mutate func(t *testing.T, repoDir string, lease LeaseInfo)
