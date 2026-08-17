@@ -241,6 +241,8 @@ Safe return requires an explicit path and all three conditions. It checks the le
 
 The Git and process checks run twice, but they cannot lock out an external process that does not cooperate with treehouse. Such a process can change the worktree after the final check. Use `--safe` only for worktrees that automation already expects to be quiescent. The exact lease identity prevents the command from releasing a later acquisition of the same path.
 
+Invoke `return --safe` from outside the target worktree. A parent shell or any other process whose current directory is inside the worktree causes the command to refuse the release.
+
 For backward compatibility, `treehouse return <path>` without either condition keeps its original unconditional path-only behavior. Existing path-only scripts and `treehouse get --lease` stdout are unchanged.
 
 ### Recovering a damaged pool state file

@@ -97,6 +97,19 @@ func TestShouldSkipCurrentAndWindowsIdleProcesses(t *testing.T) {
 	}
 }
 
+func TestProtectedSystemExecutableNamesAreRestricted(t *testing.T) {
+	for _, name := range []string{"csrss.exe", "SMSS.EXE", "Registry", "Memory Compression", "Secure System"} {
+		if !isProtectedSystemExecutable(name) {
+			t.Fatalf("expected %q to be a protected system executable", name)
+		}
+	}
+	for _, name := range []string{"services.exe", "worker.exe", "cmd.exe"} {
+		if isProtectedSystemExecutable(name) {
+			t.Fatalf("unexpected protected system executable %q", name)
+		}
+	}
+}
+
 func TestFindProcessesInWorktreeStrictSkipsVanishedZombieAndOutsideProcesses(t *testing.T) {
 	worktree := t.TempDir()
 	probes := []processProbe{

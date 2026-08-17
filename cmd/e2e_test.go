@@ -789,13 +789,45 @@ func TestReturnSafeRequiresExactGuards(t *testing.T) {
 		})
 	}
 
-	_, stderr, code := runTreehouseFromDir(t, repoDir, lease.Path, homeDir, nil, "return", "--safe",
+	_, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "return", "--safe",
 		"--if-lease-id", lease.LeaseID, "--if-head", head, "--if-ref", ref, lease.Path)
 	if code != 0 || !strings.Contains(stderr, "Worktree returned to pool") {
 		t.Fatalf("safe return failed, code=%d stderr=%q", code, stderr)
 	}
 	if got := gitCmd(t, lease.Path, "rev-parse", "HEAD"); got != head {
 		t.Fatalf("safe return changed HEAD: got %s want %s", got, head)
+	}
+}
+
+func TestReturnSafeRefusesParentShellInsideWorktree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell parent-process coverage uses /bin/sh")
+	}
+	repoDir, homeDir := setupTestRepo(t)
+	lease := acquireLeaseJSON(t, repoDir, homeDir, "automation")
+	head := gitCmd(t, lease.Path, "rev-parse", "HEAD")
+	args := []string{
+		treehouseBin, "return", "--safe",
+		"--if-lease-id", lease.LeaseID,
+		"--if-head", head,
+		"--if-ref", "refs/remotes/origin/main",
+		lease.Path,
+	}
+	shellArgs := append([]string{"-c", `"$@" & child=$!; wait "$child"`, "treehouse-safe-parent"}, args...)
+	command := exec.Command("/bin/sh", shellArgs...)
+	command.Dir = lease.Path
+	command.Env = buildEnv(homeDir)
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "worktree has active processes") {
+		t.Fatalf("safe return from an inside shell should refuse: err=%v output=%q", err, output)
+	}
+
+	statusOut, statusErr, statusCode := runTreehouse(t, repoDir, homeDir, nil, "status", "--json")
+	if statusCode != 0 {
+		t.Fatalf("status failed, code=%d stderr=%q", statusCode, statusErr)
+	}
+	if !strings.Contains(statusOut, lease.LeaseID) {
+		t.Fatalf("inside-shell refusal cleared lease: %s", statusOut)
 	}
 }
 

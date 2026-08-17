@@ -135,15 +135,22 @@ func TestIsDirtyFindsSubmoduleChangesHiddenByConfig(t *testing.T) {
 
 func TestSafeRepositoryStateRecursesIntoSubmodules(t *testing.T) {
 	base := t.TempDir()
+	deepRepo := filepath.Join(base, "deep-source")
+	mustGit(t, "", "init", "--initial-branch=main", deepRepo)
+	mustGit(t, deepRepo, "config", "user.email", "test@test.com")
+	mustGit(t, deepRepo, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(deepRepo, "tracked.txt"), []byte("clean\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, deepRepo, "add", ".")
+	mustGit(t, deepRepo, "commit", "-m", "initial")
+
 	childRepo := filepath.Join(base, "child-source")
 	mustGit(t, "", "init", "--initial-branch=main", childRepo)
 	mustGit(t, childRepo, "config", "user.email", "test@test.com")
 	mustGit(t, childRepo, "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(childRepo, "tracked.txt"), []byte("clean\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	mustGit(t, childRepo, "add", ".")
-	mustGit(t, childRepo, "commit", "-m", "initial")
+	mustGit(t, childRepo, "-c", "protocol.file.allow=always", "submodule", "add", deepRepo, "nested")
+	mustGit(t, childRepo, "commit", "-am", "add nested child")
 
 	repoDir := filepath.Join(base, "repo")
 	mustGit(t, "", "init", "--initial-branch=main", repoDir)
@@ -151,28 +158,30 @@ func TestSafeRepositoryStateRecursesIntoSubmodules(t *testing.T) {
 	mustGit(t, repoDir, "config", "user.name", "Test")
 	mustGit(t, repoDir, "-c", "protocol.file.allow=always", "submodule", "add", childRepo, "child")
 	mustGit(t, repoDir, "commit", "-am", "add child")
-	childPath := filepath.Join(repoDir, "child")
+	mustGit(t, repoDir, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive")
+	deepPath := filepath.Join(repoDir, "child", "nested")
+	deepLabel := "submodule " + filepath.Join("child", "nested")
 
-	mustGit(t, childPath, "update-index", "--assume-unchanged", "tracked.txt")
-	if err := os.WriteFile(filepath.Join(childPath, "tracked.txt"), []byte("hidden\n"), 0o644); err != nil {
+	mustGit(t, deepPath, "update-index", "--assume-unchanged", "tracked.txt")
+	if err := os.WriteFile(filepath.Join(deepPath, "tracked.txt"), []byte("hidden\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateSafeRepositoryState(repoDir); err == nil ||
-		!strings.Contains(err.Error(), "submodule child has assume-unchanged") {
+		!strings.Contains(err.Error(), deepLabel+" has assume-unchanged") {
 		t.Fatalf("hidden submodule state error = %v, want index flag refusal", err)
 	}
 
-	mustGit(t, childPath, "update-index", "--no-assume-unchanged", "tracked.txt")
-	mustGit(t, childPath, "checkout", "--", "tracked.txt")
-	mergeHead := gitOutput(t, childPath, "rev-parse", "--git-path", "MERGE_HEAD")
+	mustGit(t, deepPath, "update-index", "--no-assume-unchanged", "tracked.txt")
+	mustGit(t, deepPath, "checkout", "--", "tracked.txt")
+	mergeHead := gitOutput(t, deepPath, "rev-parse", "--git-path", "MERGE_HEAD")
 	if !filepath.IsAbs(mergeHead) {
-		mergeHead = filepath.Join(childPath, mergeHead)
+		mergeHead = filepath.Join(deepPath, mergeHead)
 	}
-	if err := os.WriteFile(mergeHead, []byte(gitOutput(t, childPath, "rev-parse", "HEAD")+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(mergeHead, []byte(gitOutput(t, deepPath, "rev-parse", "HEAD")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateSafeRepositoryState(repoDir); err == nil ||
-		!strings.Contains(err.Error(), "submodule child has merge in progress") {
+		!strings.Contains(err.Error(), deepLabel+" has merge in progress") {
 		t.Fatalf("submodule operation error = %v, want merge refusal", err)
 	}
 }
