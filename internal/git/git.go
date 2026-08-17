@@ -263,6 +263,13 @@ func validateSafeRepositoryState(worktreePath string) error {
 		if unsafeFlags {
 			return fmt.Errorf("%s has assume-unchanged or skip-worktree index flags", label)
 		}
+		dirty, err := IsDirty(path)
+		if err != nil {
+			return err
+		}
+		if dirty {
+			return fmt.Errorf("%s has uncommitted changes", label)
+		}
 	}
 	return nil
 }

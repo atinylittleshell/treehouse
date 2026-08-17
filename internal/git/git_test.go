@@ -159,8 +159,20 @@ func TestSafeRepositoryStateRecursesIntoSubmodules(t *testing.T) {
 	mustGit(t, repoDir, "-c", "protocol.file.allow=always", "submodule", "add", childRepo, "child")
 	mustGit(t, repoDir, "commit", "-am", "add child")
 	mustGit(t, repoDir, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive")
+	childLabel := "submodule child"
 	deepPath := filepath.Join(repoDir, "child", "nested")
 	deepLabel := "submodule " + filepath.Join("child", "nested")
+
+	mustGit(t, repoDir, "config", "submodule.child.ignore", "all")
+	mustGit(t, filepath.Join(repoDir, "child"), "config", "submodule.nested.ignore", "all")
+	if err := os.WriteFile(filepath.Join(deepPath, "tracked.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSafeRepositoryState(repoDir); err == nil ||
+		!strings.Contains(err.Error(), childLabel+" has uncommitted changes") {
+		t.Fatalf("nested dirty state error = %v, want uncommitted change refusal", err)
+	}
+	mustGit(t, deepPath, "checkout", "--", "tracked.txt")
 
 	mustGit(t, deepPath, "update-index", "--assume-unchanged", "tracked.txt")
 	if err := os.WriteFile(filepath.Join(deepPath, "tracked.txt"), []byte("hidden\n"), 0o644); err != nil {

@@ -243,6 +243,8 @@ The Git and process checks run twice, but they cannot lock out an external proce
 
 Invoke `return --safe` from outside the target worktree. A parent shell or any other process whose current directory is inside the worktree causes the command to refuse the release.
 
+`return --safe` is not available on Windows because treehouse cannot inspect every process CWD there without weakening the fail-closed guarantee.
+
 For backward compatibility, `treehouse return <path>` without either condition keeps its original unconditional path-only behavior. Existing path-only scripts and `treehouse get --lease` stdout are unchanged.
 
 ### Recovering a damaged pool state file

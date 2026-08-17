@@ -799,7 +799,7 @@ func TestReturnSafeRequiresExactGuards(t *testing.T) {
 	}
 }
 
-func TestReturnSafeRefusesParentShellInsideWorktree(t *testing.T) {
+func TestReturnSafeRefusesInvocationInsideWorktree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell parent-process coverage uses /bin/sh")
 	}
@@ -813,6 +813,26 @@ func TestReturnSafeRefusesParentShellInsideWorktree(t *testing.T) {
 		"--if-ref", "refs/remotes/origin/main",
 		lease.Path,
 	}
+	_, directErr, directCode := runTreehouseFromDir(
+		t,
+		repoDir,
+		lease.Path,
+		homeDir,
+		nil,
+		"return",
+		"--safe",
+		"--if-lease-id",
+		lease.LeaseID,
+		"--if-head",
+		head,
+		"--if-ref",
+		"refs/remotes/origin/main",
+		lease.Path,
+	)
+	if directCode == 0 || !strings.Contains(directErr, "worktree has active processes") {
+		t.Fatalf("direct safe return from inside worktree should refuse: code=%d stderr=%q", directCode, directErr)
+	}
+
 	shellArgs := append([]string{"-c", `"$@" & child=$!; wait "$child"`, "treehouse-safe-parent"}, args...)
 	command := exec.Command("/bin/sh", shellArgs...)
 	command.Dir = lease.Path

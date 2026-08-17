@@ -18,7 +18,6 @@ type fakeProcessProbe struct {
 	usernameCalls *int
 	cwd           string
 	cwdErr        error
-	cwdCalls      *int
 	name          string
 	exists        bool
 	existsErr     error
@@ -37,12 +36,7 @@ func (p fakeProcessProbe) Username() (string, error) {
 	}
 	return p.username, p.usernameErr
 }
-func (p fakeProcessProbe) Cwd() (string, error) {
-	if p.cwdCalls != nil {
-		(*p.cwdCalls)++
-	}
-	return p.cwd, p.cwdErr
-}
+func (p fakeProcessProbe) Cwd() (string, error)  { return p.cwd, p.cwdErr }
 func (p fakeProcessProbe) Name() (string, error) { return p.name, nil }
 func (p fakeProcessProbe) Exists() (bool, error) { return p.exists, p.existsErr }
 
@@ -79,32 +73,12 @@ func TestFindProcessesInWorktreeStrictFailsClosed(t *testing.T) {
 	}
 }
 
-func TestShouldSkipCurrentAndWindowsIdleProcesses(t *testing.T) {
-	if !shouldSkipProcess("windows", 0, 42) {
-		t.Fatal("Windows idle process should be excluded from user-process inspection")
+func TestValidateStrictProcessPlatformRejectsWindows(t *testing.T) {
+	if err := validateStrictProcessPlatform("windows"); err == nil {
+		t.Fatal("Windows safe process inspection should be unsupported")
 	}
-	if !shouldSkipProcess("darwin", 42, 42) {
-		t.Fatal("current process should be excluded from user-process inspection")
-	}
-	for _, tc := range []struct {
-		goos       string
-		pid        int32
-		currentPID int32
-	}{
-		{goos: "windows", pid: 1, currentPID: 42},
-		{goos: "linux", pid: 0, currentPID: 42},
-		{goos: "darwin", pid: 0, currentPID: 42},
-	} {
-		if shouldSkipProcess(tc.goos, tc.pid, tc.currentPID) {
-			t.Fatalf("unexpected system-process exclusion for %s pid %d", tc.goos, tc.pid)
-		}
-	}
-}
-
-func TestProcessIDsForSessionExcludesSystemSession(t *testing.T) {
-	got := processIDsForSession(2, map[int32]uint32{1: 0, 10: 1, 20: 2, 21: 2})
-	if len(got) != 2 || !got[20] || !got[21] {
-		t.Fatalf("session process scope = %v, want only session 2", got)
+	if err := validateStrictProcessPlatform("darwin"); err != nil {
+		t.Fatalf("Darwin safe process inspection rejected: %v", err)
 	}
 }
 
@@ -157,39 +131,5 @@ func TestFindProcessesInWorktreeStrictFindsChildDirectory(t *testing.T) {
 	}
 	if usernameCalls != 0 {
 		t.Fatalf("matching process scan called Username %d times", usernameCalls)
-	}
-}
-
-func TestFindProcessesInWorktreeStrictChecksWindowsOwnerBeforeCwd(t *testing.T) {
-	worktree := t.TempDir()
-	statusCalls := 0
-	usernameCalls := 0
-	cwdCalls := 0
-	probe := fakeProcessProbe{
-		pid:           42,
-		statusErr:     errors.New("not implemented"),
-		statusCalls:   &statusCalls,
-		username:      "SYSTEM",
-		exists:        true,
-		usernameCalls: &usernameCalls,
-		cwdErr:        errors.New("access denied"),
-		cwdCalls:      &cwdCalls,
-	}
-
-	got, err := findProcessesInWorktreeStrictForOS(worktree, "ravi", "windows", []processProbe{probe})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("strict Windows scan found outside process: %v", got)
-	}
-	if statusCalls != 0 {
-		t.Fatalf("Windows process scan called Status %d times", statusCalls)
-	}
-	if usernameCalls != 1 {
-		t.Fatalf("Windows process scan called Username %d times, want 1", usernameCalls)
-	}
-	if cwdCalls != 0 {
-		t.Fatalf("other-user Windows process scan called Cwd %d times", cwdCalls)
 	}
 }

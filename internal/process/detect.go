@@ -2,7 +2,6 @@ package process
 
 import (
 	"fmt"
-	"os"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -127,6 +126,9 @@ func FindProcessesInWorktree(worktreePath string) ([]ProcessInfo, error) {
 // FindProcessesInWorktreeStrict fails when it cannot inspect a live process
 // owned by the current user.
 func FindProcessesInWorktreeStrict(worktreePath string) ([]ProcessInfo, error) {
+	if err := validateStrictProcessPlatform(runtime.GOOS); err != nil {
+		return nil, err
+	}
 	currentUser, err := user.Current()
 	if err != nil {
 		return nil, err
@@ -135,27 +137,18 @@ func FindProcessesInWorktreeStrict(worktreePath string) ([]ProcessInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	pids := make([]int32, 0, len(procs))
-	for _, p := range procs {
-		pids = append(pids, p.Pid)
-	}
-	inScope, err := processIDsInScope(pids, int32(os.Getpid()))
-	if err != nil {
-		return nil, err
-	}
 	probes := make([]processProbe, 0, len(procs))
-	currentPID := int32(os.Getpid())
 	for _, p := range procs {
-		if shouldSkipProcess(runtime.GOOS, p.Pid, currentPID) || !inScope[p.Pid] {
-			continue
-		}
 		probes = append(probes, systemProcessProbe{process: p})
 	}
 	return findProcessesInWorktreeStrictForOS(worktreePath, currentUser.Username, runtime.GOOS, probes)
 }
 
-func shouldSkipProcess(goos string, pid, currentPID int32) bool {
-	return pid == currentPID || (goos == "windows" && pid == 0)
+func validateStrictProcessPlatform(goos string) error {
+	if goos == "windows" {
+		return fmt.Errorf("safe process inspection is not supported on Windows")
+	}
+	return nil
 }
 
 func findProcessesInWorktreeStrict(worktreePath, currentUsername string, procs []processProbe) ([]ProcessInfo, error) {
@@ -171,23 +164,13 @@ func findProcessesInWorktreeStrictForOS(worktreePath, currentUsername, goos stri
 
 	var result []ProcessInfo
 	for _, p := range procs {
-		if goos == "windows" {
-			owned, err := belongsToCurrentUser(p, currentUsername)
-			if err != nil {
-				return nil, err
-			}
-			if !owned {
-				continue
-			}
-		}
 		cwd, err := p.Cwd()
 		if err != nil {
 			alive, aliveErr := p.Exists()
 			if aliveErr != nil {
 				return nil, aliveErr
 			}
-			if alive && !isZombie(goos, p) &&
-				(goos == "windows" || !belongsToAnotherUser(p, currentUsername)) {
+			if alive && !isZombie(goos, p) && !belongsToAnotherUser(p, currentUsername) {
 				return nil, fmt.Errorf("inspect cwd for process %d: %w", p.PID(), err)
 			}
 			continue
@@ -197,8 +180,7 @@ func findProcessesInWorktreeStrictForOS(worktreePath, currentUsername, goos stri
 			if aliveErr != nil {
 				return nil, aliveErr
 			}
-			if alive && !isZombie(goos, p) &&
-				(goos == "windows" || !belongsToAnotherUser(p, currentUsername)) {
+			if alive && !isZombie(goos, p) && !belongsToAnotherUser(p, currentUsername) {
 				return nil, fmt.Errorf("inspect cwd for process %d: empty path", p.PID())
 			}
 			continue
@@ -214,21 +196,6 @@ func findProcessesInWorktreeStrictForOS(worktreePath, currentUsername, goos stri
 		}
 	}
 	return result, nil
-}
-
-func belongsToCurrentUser(p processProbe, currentUsername string) (bool, error) {
-	username, err := p.Username()
-	if err == nil {
-		return strings.EqualFold(username, currentUsername), nil
-	}
-	alive, aliveErr := p.Exists()
-	if aliveErr != nil {
-		return false, aliveErr
-	}
-	if !alive {
-		return false, nil
-	}
-	return false, fmt.Errorf("inspect owner for process %d: %w", p.PID(), err)
 }
 
 func belongsToAnotherUser(p processProbe, currentUsername string) bool {
