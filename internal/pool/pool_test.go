@@ -77,6 +77,19 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func TestAcquire_RunsPostCreateHookInWorktree(t *testing.T) {
 	repoDir, poolDir := setupRepo(t)
 
@@ -1881,6 +1894,250 @@ func TestRelease_PreIdentityLeaseFailsConditionalAndAllowsLegacyReturn(t *testin
 	if err := Release(poolDir, lease.Path); err != nil {
 		t.Fatalf("legacy unconditional release rejected pre-identity lease: %v", err)
 	}
+}
+
+func TestReleaseSafe_ClearsOnlyMatchingCleanIdleLease(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	lease, err := AcquireLeaseInfo(repoDir, poolDir, 1, nil, "automation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := gitOutput(t, lease.Path, "rev-parse", "HEAD")
+	preconditions := SafeReleasePreconditions{
+		ExpectedLeaseID: lease.LeaseID,
+		ExpectedHEAD:    head,
+		ExpectedRef:     "refs/remotes/origin/main",
+	}
+
+	if err := ReleaseSafe(poolDir, lease.Path, preconditions); err != nil {
+		t.Fatalf("ReleaseSafe failed: %v", err)
+	}
+	if got := gitOutput(t, lease.Path, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("safe release changed HEAD: got %s want %s", got, head)
+	}
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Worktrees) != 1 || state.Worktrees[0].Leased {
+		t.Fatalf("safe release did not clear lease: %#v", state.Worktrees)
+	}
+}
+
+func TestReleaseSafe_RefusesChangedOrUnsafeWorktree(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(t *testing.T, lease LeaseInfo, head string)
+		change func(preconditions *SafeReleasePreconditions)
+		want   string
+	}{
+		{
+			name: "wrong head",
+			change: func(preconditions *SafeReleasePreconditions) {
+				preconditions.ExpectedHEAD = strings.Repeat("0", len(preconditions.ExpectedHEAD))
+			},
+			want: "worktree HEAD changed",
+		},
+		{
+			name: "unsupported ref",
+			change: func(preconditions *SafeReleasePreconditions) {
+				preconditions.ExpectedRef = "refs/tags/main"
+			},
+			want: "safe return ref must be under",
+		},
+		{
+			name: "dirty",
+			mutate: func(t *testing.T, lease LeaseInfo, _ string) {
+				if err := os.WriteFile(filepath.Join(lease.Path, "dirty.txt"), []byte("keep\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "worktree has uncommitted changes",
+		},
+		{
+			name: "merge operation",
+			mutate: func(t *testing.T, lease LeaseInfo, head string) {
+				path := gitOutput(t, lease.Path, "rev-parse", "--git-path", "MERGE_HEAD")
+				if !filepath.IsAbs(path) {
+					path = filepath.Join(lease.Path, path)
+				}
+				if err := os.WriteFile(path, []byte(head+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "worktree has merge in progress",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repoDir, poolDir := setupRepo(t)
+			lease, err := AcquireLeaseInfo(repoDir, poolDir, 1, nil, "automation")
+			if err != nil {
+				t.Fatal(err)
+			}
+			head := gitOutput(t, lease.Path, "rev-parse", "HEAD")
+			preconditions := SafeReleasePreconditions{
+				ExpectedLeaseID: lease.LeaseID,
+				ExpectedHEAD:    head,
+				ExpectedRef:     "refs/remotes/origin/main",
+			}
+			if tc.mutate != nil {
+				tc.mutate(t, lease, head)
+			}
+			if tc.change != nil {
+				tc.change(&preconditions)
+			}
+
+			err = ReleaseSafe(poolDir, lease.Path, preconditions)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ReleaseSafe error = %v, want %q", err, tc.want)
+			}
+			state, readErr := ReadState(poolDir)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if len(state.Worktrees) != 1 || !state.Worktrees[0].Leased {
+				t.Fatalf("safe refusal cleared lease: %#v", state.Worktrees)
+			}
+		})
+	}
+}
+
+func TestReleaseSafe_RefusesActiveProcess(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	lease, err := AcquireLeaseInfo(repoDir, poolDir, 1, nil, "automation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := gitOutput(t, lease.Path, "rev-parse", "HEAD")
+	cmd := startSafeReleaseProbe(t, lease.Path)
+
+	err = ReleaseSafe(poolDir, lease.Path, SafeReleasePreconditions{
+		ExpectedLeaseID: lease.LeaseID,
+		ExpectedHEAD:    head,
+		ExpectedRef:     "refs/remotes/origin/main",
+	})
+	if err == nil || !strings.Contains(err.Error(), "worktree has active processes") {
+		t.Fatalf("ReleaseSafe error = %v, want active process refusal", err)
+	}
+	if process.Exists(int32(cmd.Process.Pid)) == false {
+		t.Fatal("safe refusal terminated active process")
+	}
+}
+
+func TestReleaseSafe_RechecksExternalStateBeforeClearingLease(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(t *testing.T, repoDir string, lease LeaseInfo)
+		want   string
+	}{
+		{
+			name: "dirty file appears",
+			mutate: func(t *testing.T, _ string, lease LeaseInfo) {
+				if err := os.WriteFile(filepath.Join(lease.Path, "late.txt"), []byte("keep\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "worktree has uncommitted changes",
+		},
+		{
+			name: "ref changes",
+			mutate: func(t *testing.T, repoDir string, _ LeaseInfo) {
+				if err := os.WriteFile(filepath.Join(repoDir, "late.txt"), []byte("change\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				runGit(t, repoDir, "add", "late.txt")
+				runGit(t, repoDir, "commit", "-m", "late")
+				runGit(t, repoDir, "update-ref", "refs/remotes/origin/main", "HEAD")
+			},
+			want: "ref refs/remotes/origin/main changed",
+		},
+		{
+			name: "attachment changes",
+			mutate: func(t *testing.T, _ string, lease LeaseInfo) {
+				runGit(t, lease.Path, "switch", "-c", "replacement")
+			},
+			want: "must be detached",
+		},
+		{
+			name: "process starts",
+			mutate: func(t *testing.T, _ string, lease LeaseInfo) {
+				startSafeReleaseProbe(t, lease.Path)
+			},
+			want: "worktree has active processes",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repoDir, poolDir := setupRepo(t)
+			lease, err := AcquireLeaseInfo(repoDir, poolDir, 1, nil, "automation")
+			if err != nil {
+				t.Fatal(err)
+			}
+			head := gitOutput(t, lease.Path, "rev-parse", "HEAD")
+			err = releaseSafe(poolDir, lease.Path, SafeReleasePreconditions{
+				ExpectedLeaseID: lease.LeaseID,
+				ExpectedHEAD:    head,
+				ExpectedRef:     "refs/remotes/origin/main",
+			}, func() {
+				tc.mutate(t, repoDir, lease)
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("releaseSafe error = %v, want %q", err, tc.want)
+			}
+			state, readErr := ReadState(poolDir)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if len(state.Worktrees) != 1 || !state.Worktrees[0].Leased {
+				t.Fatalf("safe refusal cleared lease: %#v", state.Worktrees)
+			}
+		})
+	}
+}
+
+func startSafeReleaseProbe(t *testing.T, worktreePath string) *exec.Cmd {
+	t.Helper()
+	ready := filepath.Join(t.TempDir(), "ready")
+	cmd := exec.Command(os.Args[0], "-test.run=TestReleaseSafeProcessProbe")
+	cmd.Env = append(os.Environ(),
+		"TREEHOUSE_SAFE_RELEASE_PROBE=1",
+		"TREEHOUSE_SAFE_RELEASE_PATH="+worktreePath,
+		"TREEHOUSE_SAFE_RELEASE_READY="+ready,
+	)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("process probe did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return cmd
+}
+
+func TestReleaseSafeProcessProbe(t *testing.T) {
+	if os.Getenv("TREEHOUSE_SAFE_RELEASE_PROBE") != "1" {
+		return
+	}
+	if err := os.Chdir(os.Getenv("TREEHOUSE_SAFE_RELEASE_PATH")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("TREEHOUSE_SAFE_RELEASE_READY"), []byte("ready\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Second)
 }
 
 func TestList_ShowsLeasedState(t *testing.T) {

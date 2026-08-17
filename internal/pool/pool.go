@@ -225,6 +225,13 @@ type ReleasePreconditions struct {
 	ExpectedLeaseHolder *string
 }
 
+type SafeReleasePreconditions struct {
+	ExpectedLeaseID     string
+	ExpectedLeaseHolder *string
+	ExpectedHEAD        string
+	ExpectedRef         string
+}
+
 // Release resets a managed worktree, clears its short-lived owner reservation or
 // durable lease, and returns it to the available pool. It retains the legacy
 // unconditional behavior of releasing by path.
@@ -282,6 +289,66 @@ func ReleaseConditional(poolDir, worktreePath string, preconditions ReleasePreco
 		clearLease(wt)
 		return WriteState(poolDir, state)
 	})
+}
+
+// ReleaseSafe clears a durable lease without resetting files or terminating
+// processes after all caller-supplied identities and local safety checks match.
+func ReleaseSafe(poolDir, worktreePath string, preconditions SafeReleasePreconditions) error {
+	return releaseSafe(poolDir, worktreePath, preconditions, nil)
+}
+
+func releaseSafe(poolDir, worktreePath string, preconditions SafeReleasePreconditions, afterFirstValidation func()) error {
+	expectedLeaseID := preconditions.ExpectedLeaseID
+	return WithStateLock(poolDir, func() error {
+		state, err := ReadState(poolDir)
+		if err != nil {
+			return err
+		}
+		wt, err := releasableWorktree(&state, worktreePath, ReleasePreconditions{
+			ExpectedLeaseID:     &expectedLeaseID,
+			ExpectedLeaseHolder: preconditions.ExpectedLeaseHolder,
+		})
+		if err != nil {
+			return err
+		}
+
+		if err := validateSafeReleaseState(worktreePath, preconditions); err != nil {
+			return err
+		}
+		if afterFirstValidation != nil {
+			afterFirstValidation()
+		}
+		// Recheck after a full scan because Git and process state do not share the pool lock.
+		if err := validateSafeReleaseState(worktreePath, preconditions); err != nil {
+			return err
+		}
+
+		wt.OwnerPID = 0
+		wt.OwnerStartedAt = 0
+		clearLease(wt)
+		return WriteState(poolDir, state)
+	})
+}
+
+func validateSafeReleaseState(worktreePath string, preconditions SafeReleasePreconditions) error {
+	if err := git.ValidateSafeReturnState(worktreePath, preconditions.ExpectedHEAD, preconditions.ExpectedRef); err != nil {
+		return err
+	}
+	dirty, err := git.IsDirty(worktreePath)
+	if err != nil {
+		return err
+	}
+	if dirty {
+		return fmt.Errorf("worktree has uncommitted changes")
+	}
+	processes, err := process.FindProcessesInWorktreeStrict(worktreePath)
+	if err != nil {
+		return err
+	}
+	if len(processes) > 0 {
+		return fmt.Errorf("worktree has active processes: %v", processes)
+	}
+	return nil
 }
 
 func releasableWorktree(state *State, worktreePath string, preconditions ReleasePreconditions) (*WorktreeEntry, error) {

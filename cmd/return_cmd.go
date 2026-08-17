@@ -16,8 +16,11 @@ import (
 
 var (
 	returnForce         bool
+	returnSafe          bool
 	returnIfLeaseID     string
 	returnIfLeaseHolder string
+	returnIfHEAD        string
+	returnIfRef         string
 )
 
 var (
@@ -31,6 +34,20 @@ var returnCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("if-lease-id") && returnIfLeaseID == "" {
 			return fmt.Errorf("--if-lease-id cannot be empty")
+		}
+		if returnSafe && returnForce {
+			return fmt.Errorf("--safe cannot be used with --force")
+		}
+		if returnSafe && (!cmd.Flags().Changed("if-lease-id") || returnIfLeaseID == "" ||
+			!cmd.Flags().Changed("if-head") || returnIfHEAD == "" ||
+			!cmd.Flags().Changed("if-ref") || returnIfRef == "") {
+			return fmt.Errorf("--safe requires --if-lease-id, --if-head, and --if-ref")
+		}
+		if returnSafe && len(args) != 1 {
+			return fmt.Errorf("--safe requires an explicit worktree path")
+		}
+		if !returnSafe && (cmd.Flags().Changed("if-head") || cmd.Flags().Changed("if-ref")) {
+			return fmt.Errorf("--if-head and --if-ref require --safe")
 		}
 
 		wtPath, err := resolveWorktreePath(args)
@@ -46,8 +63,17 @@ var returnCmd = &cobra.Command{
 			return err
 		}
 
-		conditional := cmd.Flags().Changed("if-lease-id") || cmd.Flags().Changed("if-lease-holder")
-		if conditional {
+		if returnSafe {
+			preconditions := pool.SafeReleasePreconditions{
+				ExpectedLeaseID: returnIfLeaseID,
+				ExpectedHEAD:    returnIfHEAD,
+				ExpectedRef:     returnIfRef,
+			}
+			if cmd.Flags().Changed("if-lease-holder") {
+				preconditions.ExpectedLeaseHolder = &returnIfLeaseHolder
+			}
+			err = pool.ReleaseSafe(poolDir, wtPath, preconditions)
+		} else if cmd.Flags().Changed("if-lease-id") || cmd.Flags().Changed("if-lease-holder") {
 			preconditions := pool.ReleasePreconditions{}
 			if cmd.Flags().Changed("if-lease-id") {
 				preconditions.ExpectedLeaseID = &returnIfLeaseID
@@ -85,8 +111,11 @@ var returnCmd = &cobra.Command{
 
 func init() {
 	returnCmd.Flags().BoolVar(&returnForce, "force", false, "Clean, reset, and return without prompting")
+	returnCmd.Flags().BoolVar(&returnSafe, "safe", false, "Return only an unchanged, clean, idle lease without resetting files")
 	returnCmd.Flags().StringVar(&returnIfLeaseID, "if-lease-id", "", "Return only if the current lease has this identity")
 	returnCmd.Flags().StringVar(&returnIfLeaseHolder, "if-lease-holder", "", "Return only if the current lease has this holder")
+	returnCmd.Flags().StringVar(&returnIfHEAD, "if-head", "", "Return only if HEAD has this full commit object ID")
+	returnCmd.Flags().StringVar(&returnIfRef, "if-ref", "", "Return only if HEAD still matches this full branch ref")
 	rootCmd.AddCommand(returnCmd)
 }
 

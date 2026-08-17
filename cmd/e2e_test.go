@@ -754,6 +754,79 @@ func TestReturnConditionalLeaseIdentityLifecycle(t *testing.T) {
 	}
 }
 
+func TestReturnSafeRequiresExactGuards(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	lease := acquireLeaseJSON(t, repoDir, homeDir, "automation")
+	head := gitCmd(t, lease.Path, "rev-parse", "HEAD")
+	ref := "refs/remotes/origin/main"
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "force",
+			args: []string{"return", "--safe", "--force", "--if-lease-id", lease.LeaseID, "--if-head", head, "--if-ref", ref, lease.Path},
+			want: "--safe cannot be used with --force",
+		},
+		{
+			name: "missing head",
+			args: []string{"return", "--safe", "--if-lease-id", lease.LeaseID, "--if-ref", ref, lease.Path},
+			want: "--safe requires --if-lease-id, --if-head, and --if-ref",
+		},
+		{
+			name: "unsupported ref",
+			args: []string{"return", "--safe", "--if-lease-id", lease.LeaseID, "--if-head", head, "--if-ref", "refs/tags/main", lease.Path},
+			want: "safe return ref must be under refs/heads/ or refs/remotes/origin/",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runTreehouse(t, repoDir, homeDir, nil, tc.args...)
+			if code == 0 || !strings.Contains(stderr, tc.want) {
+				t.Fatalf("safe return should refuse, code=%d stderr=%q", code, stderr)
+			}
+		})
+	}
+
+	_, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "return", "--safe",
+		"--if-lease-id", lease.LeaseID, "--if-head", head, "--if-ref", ref, lease.Path)
+	if code != 0 || !strings.Contains(stderr, "Worktree returned to pool") {
+		t.Fatalf("safe return failed, code=%d stderr=%q", code, stderr)
+	}
+	if got := gitCmd(t, lease.Path, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("safe return changed HEAD: got %s want %s", got, head)
+	}
+}
+
+func TestReturnSafeRefusesDirtyWorktreeWithoutMutation(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	lease := acquireLeaseJSON(t, repoDir, homeDir, "automation")
+	head := gitCmd(t, lease.Path, "rev-parse", "HEAD")
+	sentinel := filepath.Join(lease.Path, "must-survive.txt")
+	if err := os.WriteFile(sentinel, []byte("preserve\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "return", "--safe",
+		"--if-lease-id", lease.LeaseID, "--if-head", head,
+		"--if-ref", "refs/remotes/origin/main", lease.Path)
+	if code == 0 || !strings.Contains(stderr, "worktree has uncommitted changes") {
+		t.Fatalf("dirty safe return should refuse, code=%d stderr=%q", code, stderr)
+	}
+	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "preserve\n" {
+		t.Fatalf("safe refusal changed sentinel: data=%q err=%v", data, err)
+	}
+
+	statusOut, statusErr, statusCode := runTreehouse(t, repoDir, homeDir, nil, "status", "--json")
+	if statusCode != 0 {
+		t.Fatalf("status failed, code=%d stderr=%q", statusCode, statusErr)
+	}
+	if !strings.Contains(statusOut, lease.LeaseID) {
+		t.Fatalf("safe refusal cleared lease: %s", statusOut)
+	}
+}
+
 func TestReturnConditionalDirtyPromptDoesNotHoldPoolLock(t *testing.T) {
 	repoDir, homeDir := setupTestRepo(t)
 	lease := acquireLeaseJSON(t, repoDir, homeDir, "holder-A")

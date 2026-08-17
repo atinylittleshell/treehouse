@@ -169,8 +169,11 @@ The default treehouse root is `~/.treehouse/`.
 | `enter`   | `--print-path` | Print only the worktree's absolute path to stdout instead of opening a subshell (for `cd "$(treehouse enter --print-path 1)"`) |
 | `status`  | `--json` | Print worktree status and lease metadata as JSON |
 | `return`  | `--force` | Clean, reset, and return without prompting |
+| `return`  | `--safe` | Release an exact clean, idle lease without changing files or terminating processes |
 | `return`  | `--if-lease-id` | Return only if the current lease has the expected per-acquisition identity |
 | `return`  | `--if-lease-holder` | Return only if the current lease has the expected holder |
+| `return`  | `--if-head` | With `--safe`, require this full HEAD object ID |
+| `return`  | `--if-ref` | With `--safe`, require this exact local or `origin` branch ref |
 | `prune`   | `--yes`   | Delete listed prune candidates instead of doing a dry run |
 | `prune`   | `--all`   | Sweep every managed pool under the user-level treehouse root |
 | `prune`   | `--global` | Alias for `--all` |
@@ -223,6 +226,18 @@ treehouse return --force \
 ```
 
 Treehouse compares supplied conditions while holding the pool state lock. A missing lease or mismatch exits nonzero before process termination, worktree reset, or state clearing. The same lock fences a matching return through the final clear, so the identity succeeds once and cannot release a later acquisition of the same path. `--if-lease-holder` is optional; use `--if-lease-id` for ABA protection when a holder may be reused.
+
+Automation that must not reset files or terminate processes can use safe return:
+
+```sh
+treehouse return --safe \
+  --if-lease-id "$lease_id" \
+  --if-head "$head_oid" \
+  --if-ref "$full_branch_ref" \
+  "$path"
+```
+
+Safe return requires an explicit path and all three conditions. It checks the lease, HEAD, branch attachment, Git operation state, tracked and untracked changes, and current-user processes while holding the pool lock. It fails closed on inspection errors. A successful safe return only clears the lease; it does not terminate processes, reset HEAD, or remove files. `--if-ref` accepts only `refs/heads/...` for an attached HEAD or `refs/remotes/origin/...` for a detached HEAD.
 
 For backward compatibility, `treehouse return <path>` without either condition keeps its original unconditional path-only behavior. Existing path-only scripts and `treehouse get --lease` stdout are unchanged.
 

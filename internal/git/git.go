@@ -2,7 +2,9 @@ package git
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -180,6 +182,126 @@ func ResetWorktree(worktreePath, branch string) error {
 func DetachWorktree(worktreePath string) error {
 	_, err := runGit(worktreePath, "checkout", "--detach")
 	return err
+}
+
+func ValidateSafeReturnState(worktreePath, expectedHead, expectedRef string) error {
+	if err := validateCommitOID(expectedHead); err != nil {
+		return err
+	}
+	if err := validateSafeReturnRef(expectedRef); err != nil {
+		return err
+	}
+
+	head, err := runGit(worktreePath, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return err
+	}
+	if head != expectedHead {
+		return fmt.Errorf("worktree HEAD changed: expected %s, got %s", expectedHead, head)
+	}
+
+	if _, symbolic, err := symbolicRef(worktreePath, expectedRef); err != nil {
+		return err
+	} else if symbolic {
+		return fmt.Errorf("safe return ref must not be symbolic: %s", expectedRef)
+	}
+	refHead, err := runGit(worktreePath, "rev-parse", "--verify", expectedRef+"^{commit}")
+	if err != nil {
+		return err
+	}
+	if refHead != expectedHead {
+		return fmt.Errorf("ref %s changed: expected %s, got %s", expectedRef, expectedHead, refHead)
+	}
+
+	symbolicHead, attached, err := symbolicHead(worktreePath)
+	if err != nil {
+		return err
+	}
+	switch {
+	case strings.HasPrefix(expectedRef, "refs/heads/") && (!attached || symbolicHead != expectedRef):
+		return fmt.Errorf("worktree HEAD is not attached to %s", expectedRef)
+	case strings.HasPrefix(expectedRef, "refs/remotes/origin/") && attached:
+		return fmt.Errorf("worktree HEAD must be detached for remote ref %s", expectedRef)
+	}
+
+	operation, err := OperationInProgress(worktreePath)
+	if err != nil {
+		return err
+	}
+	if operation != "" {
+		return fmt.Errorf("worktree has %s in progress", operation)
+	}
+	return nil
+}
+
+func OperationInProgress(worktreePath string) (string, error) {
+	operations := []struct {
+		path string
+		name string
+	}{
+		{path: "MERGE_HEAD", name: "merge"},
+		{path: "rebase-apply", name: "rebase"},
+		{path: "rebase-merge", name: "rebase"},
+		{path: "CHERRY_PICK_HEAD", name: "cherry-pick"},
+		{path: "REVERT_HEAD", name: "revert"},
+		{path: "BISECT_LOG", name: "bisect"},
+		{path: "sequencer", name: "sequencer"},
+	}
+	for _, operation := range operations {
+		path, err := runGit(worktreePath, "rev-parse", "--git-path", operation.path)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(worktreePath, path)
+		}
+		if _, err := os.Stat(path); err == nil {
+			return operation.name, nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+	return "", nil
+}
+
+func validateCommitOID(value string) error {
+	if len(value) != 40 && len(value) != 64 {
+		return fmt.Errorf("expected HEAD must be a full commit object ID")
+	}
+	if _, err := hex.DecodeString(value); err != nil {
+		return fmt.Errorf("expected HEAD must be a full commit object ID")
+	}
+	return nil
+}
+
+func validateSafeReturnRef(ref string) error {
+	if !strings.HasPrefix(ref, "refs/heads/") && !strings.HasPrefix(ref, "refs/remotes/origin/") {
+		return fmt.Errorf("safe return ref must be under refs/heads/ or refs/remotes/origin/")
+	}
+	if ref == "refs/heads/" || ref == "refs/remotes/origin/" {
+		return fmt.Errorf("safe return ref must name a branch")
+	}
+	if _, err := runGit("", "check-ref-format", ref); err != nil {
+		return fmt.Errorf("invalid safe return ref %q", ref)
+	}
+	return nil
+}
+
+func symbolicHead(worktreePath string) (string, bool, error) {
+	return symbolicRef(worktreePath, "HEAD")
+}
+
+func symbolicRef(worktreePath, ref string) (string, bool, error) {
+	cmd := exec.Command("git", "symbolic-ref", "-q", ref)
+	cmd.Dir = worktreePath
+	out, err := cmd.Output()
+	if err == nil {
+		return strings.TrimSpace(string(out)), true, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return "", false, nil
+	}
+	return "", false, err
 }
 
 // DefaultBranchMergeRef returns the fully qualified ref used for merge safety checks.
