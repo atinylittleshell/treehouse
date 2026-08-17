@@ -18,10 +18,10 @@ type fakeProcessProbe struct {
 	usernameCalls *int
 	cwd           string
 	cwdErr        error
+	cwdCalls      *int
 	name          string
 	exists        bool
 	existsErr     error
-	protected     bool
 }
 
 func (p fakeProcessProbe) PID() int32 { return p.pid }
@@ -37,10 +37,14 @@ func (p fakeProcessProbe) Username() (string, error) {
 	}
 	return p.username, p.usernameErr
 }
-func (p fakeProcessProbe) Cwd() (string, error)  { return p.cwd, p.cwdErr }
+func (p fakeProcessProbe) Cwd() (string, error) {
+	if p.cwdCalls != nil {
+		(*p.cwdCalls)++
+	}
+	return p.cwd, p.cwdErr
+}
 func (p fakeProcessProbe) Name() (string, error) { return p.name, nil }
 func (p fakeProcessProbe) Exists() (bool, error) { return p.exists, p.existsErr }
-func (p fakeProcessProbe) ProtectedSystem() bool { return p.protected }
 
 func TestFindProcessesInWorktreeStrictFailsClosed(t *testing.T) {
 	worktree := t.TempDir()
@@ -97,16 +101,10 @@ func TestShouldSkipCurrentAndWindowsIdleProcesses(t *testing.T) {
 	}
 }
 
-func TestProtectedSystemExecutableNamesAreRestricted(t *testing.T) {
-	for _, name := range []string{"csrss.exe", "SMSS.EXE", "Registry", "Memory Compression", "Secure System"} {
-		if !isProtectedSystemExecutable(name) {
-			t.Fatalf("expected %q to be a protected system executable", name)
-		}
-	}
-	for _, name := range []string{"services.exe", "worker.exe", "cmd.exe"} {
-		if isProtectedSystemExecutable(name) {
-			t.Fatalf("unexpected protected system executable %q", name)
-		}
+func TestProcessIDsForSessionExcludesSystemSession(t *testing.T) {
+	got := processIDsForSession(2, map[int32]uint32{1: 0, 10: 1, 20: 2, 21: 2})
+	if len(got) != 2 || !got[20] || !got[21] {
+		t.Fatalf("session process scope = %v, want only session 2", got)
 	}
 }
 
@@ -162,18 +160,20 @@ func TestFindProcessesInWorktreeStrictFindsChildDirectory(t *testing.T) {
 	}
 }
 
-func TestFindProcessesInWorktreeStrictDoesNotCallStatusOnWindows(t *testing.T) {
+func TestFindProcessesInWorktreeStrictChecksWindowsOwnerBeforeCwd(t *testing.T) {
 	worktree := t.TempDir()
 	statusCalls := 0
 	usernameCalls := 0
+	cwdCalls := 0
 	probe := fakeProcessProbe{
 		pid:           42,
 		statusErr:     errors.New("not implemented"),
 		statusCalls:   &statusCalls,
-		cwd:           "",
+		username:      "SYSTEM",
 		exists:        true,
-		protected:     true,
 		usernameCalls: &usernameCalls,
+		cwdErr:        errors.New("access denied"),
+		cwdCalls:      &cwdCalls,
 	}
 
 	got, err := findProcessesInWorktreeStrictForOS(worktree, "ravi", "windows", []processProbe{probe})
@@ -186,7 +186,10 @@ func TestFindProcessesInWorktreeStrictDoesNotCallStatusOnWindows(t *testing.T) {
 	if statusCalls != 0 {
 		t.Fatalf("Windows process scan called Status %d times", statusCalls)
 	}
-	if usernameCalls != 0 {
-		t.Fatalf("protected Windows process scan called Username %d times", usernameCalls)
+	if usernameCalls != 1 {
+		t.Fatalf("Windows process scan called Username %d times, want 1", usernameCalls)
+	}
+	if cwdCalls != 0 {
+		t.Fatalf("other-user Windows process scan called Cwd %d times", cwdCalls)
 	}
 }
