@@ -9,17 +9,19 @@ import (
 )
 
 type fakeProcessProbe struct {
-	pid         int32
-	status      []string
-	statusErr   error
-	statusCalls *int
-	username    string
-	usernameErr error
-	cwd         string
-	cwdErr      error
-	name        string
-	exists      bool
-	existsErr   error
+	pid           int32
+	status        []string
+	statusErr     error
+	statusCalls   *int
+	username      string
+	usernameErr   error
+	usernameCalls *int
+	cwd           string
+	cwdErr        error
+	name          string
+	exists        bool
+	existsErr     error
+	protected     bool
 }
 
 func (p fakeProcessProbe) PID() int32 { return p.pid }
@@ -29,10 +31,16 @@ func (p fakeProcessProbe) Status() ([]string, error) {
 	}
 	return p.status, p.statusErr
 }
-func (p fakeProcessProbe) Username() (string, error) { return p.username, p.usernameErr }
-func (p fakeProcessProbe) Cwd() (string, error)      { return p.cwd, p.cwdErr }
-func (p fakeProcessProbe) Name() (string, error)     { return p.name, nil }
-func (p fakeProcessProbe) Exists() (bool, error)     { return p.exists, p.existsErr }
+func (p fakeProcessProbe) Username() (string, error) {
+	if p.usernameCalls != nil {
+		(*p.usernameCalls)++
+	}
+	return p.username, p.usernameErr
+}
+func (p fakeProcessProbe) Cwd() (string, error)  { return p.cwd, p.cwdErr }
+func (p fakeProcessProbe) Name() (string, error) { return p.name, nil }
+func (p fakeProcessProbe) Exists() (bool, error) { return p.exists, p.existsErr }
+func (p fakeProcessProbe) ProtectedSystem() bool { return p.protected }
 
 func TestFindProcessesInWorktreeStrictFailsClosed(t *testing.T) {
 	worktree := t.TempDir()
@@ -54,13 +62,6 @@ func TestFindProcessesInWorktreeStrictFailsClosed(t *testing.T) {
 			name: "cwd error",
 			probe: fakeProcessProbe{
 				pid: 2, username: "ravi", cwdErr: cwdErr, exists: true,
-			},
-			want: "access denied",
-		},
-		{
-			name: "owner error",
-			probe: fakeProcessProbe{
-				pid: 3, usernameErr: cwdErr, exists: true,
 			},
 			want: "access denied",
 		},
@@ -96,15 +97,15 @@ func TestShouldSkipCurrentAndWindowsIdleProcesses(t *testing.T) {
 	}
 }
 
-func TestFindProcessesInWorktreeStrictSkipsVanishedAndOtherUserProcesses(t *testing.T) {
+func TestFindProcessesInWorktreeStrictSkipsVanishedZombieAndOutsideProcesses(t *testing.T) {
 	worktree := t.TempDir()
 	probes := []processProbe{
 		fakeProcessProbe{
-			pid: 0, status: []string{"zombie"}, username: "ravi",
+			pid: 0, status: []string{"zombie"},
 			cwdErr: errors.New("defunct"), exists: true,
 		},
-		fakeProcessProbe{pid: 1, usernameErr: errors.New("gone"), exists: false},
-		fakeProcessProbe{pid: 2, username: "other", cwd: worktree, exists: true},
+		fakeProcessProbe{pid: 1, cwdErr: errors.New("gone"), exists: false},
+		fakeProcessProbe{pid: 2, cwd: t.TempDir(), exists: true},
 	}
 
 	got, err := findProcessesInWorktreeStrict(worktree, "ravi", probes)
@@ -123,13 +124,14 @@ func TestFindProcessesInWorktreeStrictFindsChildDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	statusCalls := 0
+	usernameCalls := 0
 	probe := fakeProcessProbe{
-		pid:         42,
-		username:    "ravi",
-		cwd:         child,
-		name:        "agent",
-		exists:      true,
-		statusCalls: &statusCalls,
+		pid:           42,
+		cwd:           child,
+		name:          "agent",
+		exists:        true,
+		statusCalls:   &statusCalls,
+		usernameCalls: &usernameCalls,
 	}
 
 	got, err := findProcessesInWorktreeStrict(worktree, "ravi", []processProbe{probe})
@@ -142,18 +144,23 @@ func TestFindProcessesInWorktreeStrictFindsChildDirectory(t *testing.T) {
 	if statusCalls != 0 {
 		t.Fatalf("normal process scan called Status %d times", statusCalls)
 	}
+	if usernameCalls != 0 {
+		t.Fatalf("matching process scan called Username %d times", usernameCalls)
+	}
 }
 
 func TestFindProcessesInWorktreeStrictDoesNotCallStatusOnWindows(t *testing.T) {
 	worktree := t.TempDir()
 	statusCalls := 0
+	usernameCalls := 0
 	probe := fakeProcessProbe{
-		pid:         42,
-		statusErr:   errors.New("not implemented"),
-		statusCalls: &statusCalls,
-		username:    "ravi",
-		cwd:         t.TempDir(),
-		exists:      true,
+		pid:           42,
+		statusErr:     errors.New("not implemented"),
+		statusCalls:   &statusCalls,
+		cwd:           "",
+		exists:        true,
+		protected:     true,
+		usernameCalls: &usernameCalls,
 	}
 
 	got, err := findProcessesInWorktreeStrictForOS(worktree, "ravi", "windows", []processProbe{probe})
@@ -165,5 +172,8 @@ func TestFindProcessesInWorktreeStrictDoesNotCallStatusOnWindows(t *testing.T) {
 	}
 	if statusCalls != 0 {
 		t.Fatalf("Windows process scan called Status %d times", statusCalls)
+	}
+	if usernameCalls != 0 {
+		t.Fatalf("protected Windows process scan called Username %d times", usernameCalls)
 	}
 }

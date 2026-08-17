@@ -133,7 +133,51 @@ func TestIsDirtyFindsSubmoduleChangesHiddenByConfig(t *testing.T) {
 	}
 }
 
-func TestIsDirtyRejectsUnsafeIndexFlags(t *testing.T) {
+func TestSafeRepositoryStateRecursesIntoSubmodules(t *testing.T) {
+	base := t.TempDir()
+	childRepo := filepath.Join(base, "child-source")
+	mustGit(t, "", "init", "--initial-branch=main", childRepo)
+	mustGit(t, childRepo, "config", "user.email", "test@test.com")
+	mustGit(t, childRepo, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(childRepo, "tracked.txt"), []byte("clean\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, childRepo, "add", ".")
+	mustGit(t, childRepo, "commit", "-m", "initial")
+
+	repoDir := filepath.Join(base, "repo")
+	mustGit(t, "", "init", "--initial-branch=main", repoDir)
+	mustGit(t, repoDir, "config", "user.email", "test@test.com")
+	mustGit(t, repoDir, "config", "user.name", "Test")
+	mustGit(t, repoDir, "-c", "protocol.file.allow=always", "submodule", "add", childRepo, "child")
+	mustGit(t, repoDir, "commit", "-am", "add child")
+	childPath := filepath.Join(repoDir, "child")
+
+	mustGit(t, childPath, "update-index", "--assume-unchanged", "tracked.txt")
+	if err := os.WriteFile(filepath.Join(childPath, "tracked.txt"), []byte("hidden\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSafeRepositoryState(repoDir); err == nil ||
+		!strings.Contains(err.Error(), "submodule child has assume-unchanged") {
+		t.Fatalf("hidden submodule state error = %v, want index flag refusal", err)
+	}
+
+	mustGit(t, childPath, "update-index", "--no-assume-unchanged", "tracked.txt")
+	mustGit(t, childPath, "checkout", "--", "tracked.txt")
+	mergeHead := gitOutput(t, childPath, "rev-parse", "--git-path", "MERGE_HEAD")
+	if !filepath.IsAbs(mergeHead) {
+		mergeHead = filepath.Join(childPath, mergeHead)
+	}
+	if err := os.WriteFile(mergeHead, []byte(gitOutput(t, childPath, "rev-parse", "HEAD")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSafeRepositoryState(repoDir); err == nil ||
+		!strings.Contains(err.Error(), "submodule child has merge in progress") {
+		t.Fatalf("submodule operation error = %v, want merge refusal", err)
+	}
+}
+
+func TestSafeReturnRejectsUnsafeIndexFlagsWithoutChangingIsDirty(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		flag string
@@ -153,16 +197,25 @@ func TestIsDirtyRejectsUnsafeIndexFlags(t *testing.T) {
 			mustGit(t, repoDir, "add", ".")
 			mustGit(t, repoDir, "commit", "-m", "initial")
 			mustGit(t, repoDir, "update-index", tc.flag, "tracked.txt")
-			if err := os.WriteFile(trackedPath, []byte("dirty\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
 
 			dirty, err := IsDirty(repoDir)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !dirty {
-				t.Fatalf("file with %s index flag was reported clean", tc.flag)
+			if dirty {
+				t.Fatalf("clean file with %s index flag was reported dirty", tc.flag)
+			}
+			if err := validateSafeRepositoryState(repoDir); err == nil ||
+				!strings.Contains(err.Error(), "index flags") {
+				t.Fatalf("safe validation error = %v, want index flag refusal", err)
+			}
+
+			if err := os.WriteFile(trackedPath, []byte("dirty\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := validateSafeRepositoryState(repoDir); err == nil ||
+				!strings.Contains(err.Error(), "index flags") {
+				t.Fatalf("safe validation after modification = %v, want index flag refusal", err)
 			}
 		})
 	}

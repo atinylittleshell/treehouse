@@ -1,9 +1,12 @@
 package git
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -224,12 +227,42 @@ func ValidateSafeReturnState(worktreePath, expectedHead, expectedRef string) err
 		return fmt.Errorf("worktree HEAD must be detached for remote ref %s", expectedRef)
 	}
 
-	operation, err := OperationInProgress(worktreePath)
+	if err := validateSafeRepositoryState(worktreePath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateSafeRepositoryState(worktreePath string) error {
+	paths := []string{worktreePath}
+	submodules, err := initializedSubmodulePaths(worktreePath)
 	if err != nil {
 		return err
 	}
-	if operation != "" {
-		return fmt.Errorf("worktree has %s in progress", operation)
+	paths = append(paths, submodules...)
+	for _, path := range paths {
+		label := "worktree"
+		if path != worktreePath {
+			relative, err := filepath.Rel(worktreePath, path)
+			if err != nil {
+				return err
+			}
+			label = "submodule " + relative
+		}
+		operation, err := OperationInProgress(path)
+		if err != nil {
+			return err
+		}
+		if operation != "" {
+			return fmt.Errorf("%s has %s in progress", label, operation)
+		}
+		unsafeFlags, err := hasUnsafeIndexFlags(path)
+		if err != nil {
+			return err
+		}
+		if unsafeFlags {
+			return fmt.Errorf("%s has assume-unchanged or skip-worktree index flags", label)
+		}
 	}
 	return nil
 }
@@ -395,13 +428,6 @@ func IsHeadMergedIntoRef(worktreePath, ref string) (bool, error) {
 
 // IsDirty reports tracked or untracked changes, ignoring status.showUntrackedFiles.
 func IsDirty(worktreePath string) (bool, error) {
-	unsafeFlags, err := hasUnsafeIndexFlags(worktreePath)
-	if err != nil {
-		return false, err
-	}
-	if unsafeFlags {
-		return true, nil
-	}
 	out, err := runGit(worktreePath, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
 	if err != nil {
 		return false, err
@@ -410,20 +436,79 @@ func IsDirty(worktreePath string) (bool, error) {
 }
 
 func hasUnsafeIndexFlags(worktreePath string) (bool, error) {
-	out, err := runGit(worktreePath, "ls-files", "-v", "-z")
+	cmd := exec.Command("git", "ls-files", "-v", "-z")
+	cmd.Dir = worktreePath
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return false, err
 	}
-	for _, record := range strings.Split(out, "\x00") {
-		if record == "" {
-			continue
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return false, err
+	}
+	reader := bufio.NewReader(stdout)
+	for {
+		record, readErr := reader.ReadString(0)
+		if record != "" {
+			flag := record[0]
+			if flag == 'S' || (flag >= 'a' && flag <= 'z') {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				return true, nil
+			}
 		}
-		flag := record[0]
-		if flag == 'S' || (flag >= 'a' && flag <= 'z') {
-			return true, nil
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return false, readErr
 		}
 	}
+	if err := cmd.Wait(); err != nil {
+		return false, fmt.Errorf("git ls-files -v -z: %s", strings.TrimSpace(stderr.String()))
+	}
 	return false, nil
+}
+
+func initializedSubmodulePaths(worktreePath string) ([]string, error) {
+	out, err := runGitRaw(worktreePath, "ls-files", "--stage", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var result []string
+	for _, rawRecord := range bytes.Split(out, []byte{0}) {
+		if len(rawRecord) == 0 {
+			continue
+		}
+		metadata, rawPath, ok := bytes.Cut(rawRecord, []byte{'\t'})
+		if !ok || !strings.HasPrefix(string(metadata), "160000 ") {
+			continue
+		}
+		relative := filepath.Clean(filepath.FromSlash(string(rawPath)))
+		if relative == "." || filepath.IsAbs(relative) ||
+			relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("invalid submodule path %q", rawPath)
+		}
+		path := filepath.Join(worktreePath, relative)
+		if _, err := os.Stat(filepath.Join(path, ".git")); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		if _, err := runGit(path, "rev-parse", "--is-inside-work-tree"); err != nil {
+			return nil, err
+		}
+		result = append(result, path)
+		nested, err := initializedSubmodulePaths(path)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, nested...)
+	}
+	return result, nil
 }
 
 func ShortHash(s string) string {
@@ -432,6 +517,11 @@ func ShortHash(s string) string {
 }
 
 func runGit(dir string, args ...string) (string, error) {
+	out, err := runGitRaw(dir, args...)
+	return strings.TrimSpace(string(out)), err
+}
+
+func runGitRaw(dir string, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", args...)
 	if dir != "" {
 		cmd.Dir = dir
@@ -439,9 +529,9 @@ func runGit(dir string, args ...string) (string, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(exitErr.Stderr)))
+			return nil, fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(exitErr.Stderr)))
 		}
-		return "", err
+		return nil, err
 	}
-	return strings.TrimSpace(string(out)), nil
+	return out, nil
 }
