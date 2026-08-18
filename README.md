@@ -86,6 +86,7 @@ make install
 
 Treehouse manages a **pool of git worktrees** per repository, stored under the configured treehouse root.
 The default treehouse root is `~/.treehouse/`.
+You can instead keep the pool [inside the project](#in-project-storage) with `--root .`, so it lives next to the code and is removed with the project.
 
 ```
   treehouse
@@ -312,6 +313,7 @@ max_trees = 16
 # Optional worktree root directory.
 # Empty uses $HOME/.treehouse.
 # Relative paths are resolved from the repo root for repo-scoped commands.
+# Use "." to keep the pool inside the project (see "In-project storage" below).
 # Use an absolute user-level root for treehouse prune --all.
 # root = "$HOME/worktrees"
 ```
@@ -319,6 +321,39 @@ max_trees = 16
 The repo-level config takes precedence for repo-safe settings.
 `treehouse prune --all` can run without a repository, so it uses only the user-level config and does not read per-repo `treehouse.toml` files while sweeping.
 If no config is found, the default pool size is 16.
+
+### Worktree root
+
+The worktree root can also be set without a config file, and the resolved value follows this precedence (highest first):
+
+1. The `--root` flag (e.g. `treehouse get --root .`)
+2. The `TREEHOUSE_ROOT` environment variable
+3. `root` in the repo-level `treehouse.toml`
+4. `root` in the user-level `~/.config/treehouse/config.toml`
+5. The default, `~/.treehouse`
+
+A relative value (including `.`) is resolved from the repo root, exactly like a relative `root` in config; `treehouse` is always appended, so `--root .` places the pool at `<repo>/.treehouse/`.
+
+### In-project storage
+
+By default the pool lives in the global `~/.treehouse` store. Set the root to `.` to keep it **inside the project** instead:
+
+```sh
+treehouse get --root .          # one-off
+export TREEHOUSE_ROOT=.         # for a shell session
+```
+
+or commit it for the whole repo in `treehouse.toml`:
+
+```toml
+root = "."
+```
+
+This is **opt-in**; the default global store is unchanged. In-project mode:
+
+- Places the pool at `<repo>/.treehouse/`, so worktrees sit next to the code and are **removed with the project** (`rm -rf <repo>` leaves no global orphan).
+- Ignores the pool via the repo-local, untracked `.git/info/exclude`, so it never appears in `git status` and never dirties the tracked `.gitignore`.
+- Is not reached by `treehouse prune --all`, which only sweeps the global root; in-project pools are removed with the project instead.
 
 ### Hooks
 

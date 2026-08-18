@@ -60,13 +60,13 @@ func getRunE(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	poolDir, err := config.ResolvePoolDir(repoRoot, cfg.Root)
+	poolDir, err := config.ResolvePoolDir(repoRoot, config.ResolveRoot(rootFlag, cfg))
 	if err != nil {
 		return fmt.Errorf("failed to resolve pool directory: %w", err)
 	}
 
-	if err := config.EnsureGitignore(filepath.Dir(poolDir)); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to update .gitignore: %v\n", err)
+	if err := config.EnsureExcluded(filepath.Dir(poolDir)); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to update git exclude: %v\n", err)
 	}
 
 	if getLease {

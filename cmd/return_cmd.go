@@ -159,7 +159,7 @@ func resolveReturnPoolDir(wtPath string, explicitPath bool) (string, error) {
 		return "", fmt.Errorf("failed to load config: %w", err)
 	}
 
-	fallbackPoolDir, err := config.ResolvePoolDir(repoRoot, cfg.Root)
+	fallbackPoolDir, err := config.ResolvePoolDir(repoRoot, config.ResolveRoot(rootFlag, cfg))
 	if err != nil {
 		return "", err
 	}
