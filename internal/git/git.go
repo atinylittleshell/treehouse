@@ -55,6 +55,26 @@ func mainRepoRoot(repoRoot string) string {
 	return mainRoot
 }
 
+// CommonGitDir returns the absolute path to the repository's common git
+// directory for the repo containing dir. For a linked worktree this is the
+// shared .git of the main repository, so files such as info/exclude resolve to
+// the single shared location git actually reads.
+func CommonGitDir(dir string) (string, error) {
+	out, err := runGit(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		// Older git without --path-format falls back to a possibly-relative path.
+		out, err = runGit(dir, "rev-parse", "--git-common-dir")
+		if err != nil {
+			return "", err
+		}
+	}
+	p := filepath.Clean(filepath.FromSlash(out))
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(dir, p)
+	}
+	return p, nil
+}
+
 func repoRootFromCommonGitDir(dir string) (string, bool) {
 	cleaned := filepath.Clean(filepath.FromSlash(dir))
 	if filepath.Base(cleaned) != ".git" {
