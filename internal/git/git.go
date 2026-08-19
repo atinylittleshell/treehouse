@@ -15,6 +15,10 @@ func FindMainRepoRoot() (string, error) {
 	return FindMainRepoRootFrom("")
 }
 
+func FindRepoRoot() (string, error) {
+	return runGit("", "rev-parse", "--show-toplevel")
+}
+
 func FindRepoRootFrom(dir string) (string, error) {
 	return runGit(dir, "rev-parse", "--show-toplevel")
 }
