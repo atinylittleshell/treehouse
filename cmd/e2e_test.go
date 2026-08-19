@@ -504,6 +504,29 @@ func TestGetLeasePrintsOnlyPathToStdout(t *testing.T) {
 	}
 }
 
+func TestGetNoFetchUsesLocalRefs(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	missingRemote := filepath.Join(t.TempDir(), "missing.git")
+	gitCmd(t, repoDir, "remote", "set-url", "origin", missingRemote)
+
+	_, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease")
+	if code == 0 || !strings.Contains(stderr, "fetch failed") {
+		t.Fatalf("get with unreachable origin should fail fetching: code=%d stderr=%q", code, stderr)
+	}
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease", "--no-fetch", "--json")
+	if code != 0 {
+		t.Fatalf("get --no-fetch should use local refs: code=%d stderr=%q", code, stderr)
+	}
+	var lease leaseJSONResult
+	if err := json.Unmarshal([]byte(stdout), &lease); err != nil {
+		t.Fatalf("get --no-fetch returned invalid JSON %q: %v", stdout, err)
+	}
+	if _, err := os.Stat(filepath.Join(lease.Path, "README.md")); err != nil {
+		t.Fatalf("leased worktree should contain locally available repository content: %v", err)
+	}
+}
+
 func TestGetLeaseRecordsHolder(t *testing.T) {
 	repoDir, homeDir := setupTestRepo(t)
 

@@ -208,6 +208,15 @@ treehouse get --lease --lease-holder automation-A --json
 # {"path":"...","lease_id":"...","lease_holder":"automation-A","leased_at":"..."}
 ```
 
+Callers that already fetched the required refs can avoid another network operation with `--no-fetch`:
+
+```sh
+git fetch origin main refs/pull/123/head
+treehouse get --lease --no-fetch --json
+```
+
+With `--no-fetch`, Treehouse resets or creates the worktree from existing local refs and never contacts `origin`. The caller is responsible for ensuring those refs and objects are current.
+
 `treehouse status --json` returns an array with `name`, `path`, `status`, `lease_id`, `lease_holder`, `leased_at`, and `processes`. Non-leased entries use empty lease strings and a `null` timestamp. State files written before lease identities remain readable; their existing leases have an empty `lease_id` until released and acquired again.
 
 Release a lease with `treehouse return <path>`, which clears the lease, terminates any lingering processes, resets the worktree, and returns it to the pool.

@@ -44,8 +44,17 @@ type LeaseInfo struct {
 	LeasedAt    time.Time `json:"leased_at"`
 }
 
+// AcquireOptions controls optional acquisition behavior.
+type AcquireOptions struct {
+	// SkipFetch uses the repository's existing local refs instead of fetching
+	// origin before acquiring a worktree.
+	SkipFetch bool
+}
+
 // acquireOptions controls how Acquire reserves the worktree it hands out.
 type acquireOptions struct {
+	// skipFetch uses existing local refs without contacting origin.
+	skipFetch bool
 	// lease records a durable, process-independent reservation instead of the
 	// default short-lived owner reservation.
 	lease bool
@@ -61,7 +70,13 @@ type acquireOptions struct {
 // reservation (the calling process). It is the backing call for the interactive
 // `treehouse get` subshell.
 func Acquire(repoRoot, poolDir string, poolSize int, postCreate []string) (string, error) {
+	return AcquireWithOptions(repoRoot, poolDir, poolSize, postCreate, AcquireOptions{})
+}
+
+// AcquireWithOptions reserves a clean worktree with optional acquisition behavior.
+func AcquireWithOptions(repoRoot, poolDir string, poolSize int, postCreate []string, options AcquireOptions) (string, error) {
 	acquired, err := acquire(repoRoot, poolDir, poolSize, postCreate, acquireOptions{
+		skipFetch:  options.SkipFetch,
 		hookStdout: os.Stdout,
 		hookStderr: os.Stderr,
 	})
@@ -81,7 +96,13 @@ func AcquireLease(repoRoot, poolDir string, poolSize int, postCreate []string, h
 // AcquireLeaseInfo reserves a worktree exactly like AcquireLease and returns
 // the immutable identity and metadata for that acquisition.
 func AcquireLeaseInfo(repoRoot, poolDir string, poolSize int, postCreate []string, holder string) (LeaseInfo, error) {
+	return AcquireLeaseInfoWithOptions(repoRoot, poolDir, poolSize, postCreate, holder, AcquireOptions{})
+}
+
+// AcquireLeaseInfoWithOptions reserves a durable lease with optional acquisition behavior.
+func AcquireLeaseInfoWithOptions(repoRoot, poolDir string, poolSize int, postCreate []string, holder string, options AcquireOptions) (LeaseInfo, error) {
 	return acquire(repoRoot, poolDir, poolSize, postCreate, acquireOptions{
+		skipFetch:   options.SkipFetch,
 		lease:       true,
 		leaseHolder: holder,
 		hookStdout:  os.Stderr,
@@ -96,7 +117,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 	}
 
 	fmt.Fprintf(os.Stderr, "🌳 Setting up worktree...\n")
-	if git.HasRemote(repoRoot, "origin") {
+	if !opts.skipFetch && git.HasRemote(repoRoot, "origin") {
 		if err := git.Fetch(repoRoot); err != nil {
 			return LeaseInfo{}, fmt.Errorf("fetch failed: %w", err)
 		}

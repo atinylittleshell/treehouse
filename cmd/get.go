@@ -22,6 +22,7 @@ var (
 	getLease       bool
 	getLeaseHolder string
 	getJSON        bool
+	getNoFetch     bool
 )
 
 var getCmd = &cobra.Command{
@@ -42,6 +43,7 @@ func init() {
 	getCmd.Flags().BoolVar(&getLease, "lease", false, "Durably lease a worktree without opening a subshell; print only its path to stdout")
 	getCmd.Flags().StringVar(&getLeaseHolder, "lease-holder", "", "Optional label recorded as the lease holder (defaults to $TREEHOUSE_LEASE_HOLDER)")
 	getCmd.Flags().BoolVar(&getJSON, "json", false, "Print lease allocation as JSON (requires --lease)")
+	getCmd.Flags().BoolVar(&getNoFetch, "no-fetch", false, "Skip fetching origin before acquiring; use existing local refs")
 	rootCmd.AddCommand(getCmd)
 }
 
@@ -73,7 +75,9 @@ func getRunE(cmd *cobra.Command, args []string) error {
 		return getLeaseRunE(repoRoot, poolDir, cfg)
 	}
 
-	wtPath, err := pool.Acquire(repoRoot, poolDir, cfg.MaxTrees, cfg.Hooks.PostCreate)
+	wtPath, err := pool.AcquireWithOptions(repoRoot, poolDir, cfg.MaxTrees, cfg.Hooks.PostCreate, pool.AcquireOptions{
+		SkipFetch: getNoFetch,
+	})
 	if err != nil {
 		return err
 	}
@@ -121,7 +125,9 @@ func getLeaseRunE(repoRoot, poolDir string, cfg config.Config) error {
 		holder = os.Getenv("TREEHOUSE_LEASE_HOLDER")
 	}
 
-	lease, err := pool.AcquireLeaseInfo(repoRoot, poolDir, cfg.MaxTrees, cfg.Hooks.PostCreate, holder)
+	lease, err := pool.AcquireLeaseInfoWithOptions(repoRoot, poolDir, cfg.MaxTrees, cfg.Hooks.PostCreate, holder, pool.AcquireOptions{
+		SkipFetch: getNoFetch,
+	})
 	if err != nil {
 		return err
 	}
