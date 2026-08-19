@@ -103,18 +103,22 @@ func TestRemoveCleanWorktreeRejectsDirtyWorktree(t *testing.T) {
 
 func TestIsHeadMergedIntoRef(t *testing.T) {
 	tests := []struct {
-		name                 string
-		ordinaryMerge        bool
-		squashMerge          bool
-		laterUnrelated       bool
-		targetFeatureContent string
-		wantMerged           bool
+		name                   string
+		ordinaryMerge          bool
+		squashMerge            bool
+		laterUnrelated         bool
+		targetFeatureContent   string
+		emptyFeatureCommit     bool
+		revertedFeatureContent bool
+		wantMerged             bool
 	}{
 		{name: "ordinary ancestry merge", ordinaryMerge: true, wantMerged: true},
 		{name: "squash merge", squashMerge: true, wantMerged: true},
 		{name: "squash merge followed by unrelated target commit", squashMerge: true, laterUnrelated: true, wantMerged: true},
 		{name: "squash merge missing final feature content", squashMerge: true, targetFeatureContent: "one\n", wantMerged: false},
 		{name: "unique unmerged content", wantMerged: false},
+		{name: "empty feature commit", emptyFeatureCommit: true, wantMerged: false},
+		{name: "feature content fully reverted", revertedFeatureContent: true, wantMerged: false},
 	}
 
 	for _, tt := range tests {
@@ -131,15 +135,29 @@ func TestIsHeadMergedIntoRef(t *testing.T) {
 			mustGit(t, repoDir, "commit", "-m", "initial")
 			mustGit(t, repoDir, "checkout", "-b", "feature")
 
-			if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("one\n"), 0o644); err != nil {
-				t.Fatal(err)
+			switch {
+			case tt.emptyFeatureCommit:
+				mustGit(t, repoDir, "commit", "--allow-empty", "-m", "empty feature commit")
+			case tt.revertedFeatureContent:
+				if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("feature\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				mustGit(t, repoDir, "commit", "-am", "feature change")
+				if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("base\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				mustGit(t, repoDir, "commit", "-am", "revert feature change")
+			default:
+				if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("one\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				mustGit(t, repoDir, "add", "feature.txt")
+				mustGit(t, repoDir, "commit", "-m", "feature one")
+				if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("one\ntwo\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				mustGit(t, repoDir, "commit", "-am", "feature two")
 			}
-			mustGit(t, repoDir, "add", "feature.txt")
-			mustGit(t, repoDir, "commit", "-m", "feature one")
-			if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("one\ntwo\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			mustGit(t, repoDir, "commit", "-am", "feature two")
 
 			mustGit(t, repoDir, "checkout", "main")
 			switch {

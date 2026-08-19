@@ -303,10 +303,12 @@ func isHeadContentMergedIntoRef(worktreePath, ref string) (bool, error) {
 		return false, err
 	}
 
+	hasDelta := false
 	for path, baseEntry := range baseTree {
 		if baseEntry == headTree[path] {
 			continue
 		}
+		hasDelta = true
 		if headTree[path] != targetTree[path] {
 			return false, nil
 		}
@@ -315,9 +317,13 @@ func isHeadContentMergedIntoRef(worktreePath, ref string) (bool, error) {
 		if _, ok := baseTree[path]; ok {
 			continue
 		}
+		hasDelta = true
 		if headEntry != targetTree[path] {
 			return false, nil
 		}
+	}
+	if !hasDelta {
+		return false, nil
 	}
 	return true, nil
 }
