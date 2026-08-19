@@ -45,4 +45,13 @@ jobs:
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           PR_BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
-        run: bash ./.github/scripts/no-mistakes-gate.sh
+        run: |
+          set -eu
+          script=./.github/scripts/no-mistakes-gate.sh
+          if [ ! -f "$script" ]; then
+            # The script is read from the base branch on purpose, so a PR based
+            # on a main that predates it must say so rather than exit 127.
+            echo "::error::The no-mistakes gate script is missing from the base branch. Rebase onto a main that contains ${script}." >&2
+            exit 1
+          fi
+          bash "$script"
