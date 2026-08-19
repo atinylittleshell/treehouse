@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.2.0](https://github.com/kunchenguid/treehouse/compare/v2.1.1...v2.2.0) (2026-08-19)
+
+
+### Features
+
+* add --root flag and TREEHOUSE_ROOT env for the worktree root ([#93](https://github.com/kunchenguid/treehouse/issues/93)) ([5e3d282](https://github.com/kunchenguid/treehouse/commit/5e3d282592dfef5e60a5027797aa917f08c6cbf0))
+* add no-fetch worktree acquisition ([164d903](https://github.com/kunchenguid/treehouse/commit/164d9036569a406d664f988f064c6a58eea1a645))
+
+
+### Bug Fixes
+
+* **cmd:** resolve main repo root for pool commands run inside a worktree ([#51](https://github.com/kunchenguid/treehouse/issues/51)) ([3fcd637](https://github.com/kunchenguid/treehouse/commit/3fcd63771a6368fa357a9a4079a9b6e242202dcb))
+* detect squash-merged worktrees ([#88](https://github.com/kunchenguid/treehouse/issues/88)) ([a651776](https://github.com/kunchenguid/treehouse/commit/a651776a47a2911d260c55472ccdfc5f6a3aeaf8))
+* ignore in-project pool via .git/info/exclude ([fdb3f99](https://github.com/kunchenguid/treehouse/commit/fdb3f99ba1c7c6d24db7efbcbb569a61f6535489))
+* **pool:** prune stale worktree registrations before adding in get ([844acc4](https://github.com/kunchenguid/treehouse/commit/844acc4d1d7d8078f1110295689d94853a921dd7)), closes [#31](https://github.com/kunchenguid/treehouse/issues/31)
+
 ## [2.1.1](https://github.com/kunchenguid/treehouse/compare/v2.1.0...v2.1.1) (2026-07-31)
 
 
