@@ -1,6 +1,6 @@
 # Vision
 
-`treehouse` exists to make parallel coding-agent work routine by giving each task a fast, isolated, reusable Git worktree without making people or orchestration systems manage worktrees themselves.
+`treehouse` exists to make parallel coding-agent work routine by giving each task a fast, isolated, reusable Git worktree (or, with the opt-in jj backend, Jujutsu workspace) without making people or orchestration systems manage worktrees themselves.
 It serves interactive users and automated callers, and owns the worktree lifecycle rather than agent orchestration or the user's development workflow.
 
 ## Isolation and reuse

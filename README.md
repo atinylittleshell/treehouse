@@ -342,7 +342,8 @@ Opt in to the jj backend with `vcs = "jj"`, resolved in this precedence (highest
 The jj opt-in only applies where a `.jj` directory actually exists; in a plain git repository it is silently ignored and git is used, so a shell-wide `TREEHOUSE_VCS=jj` never breaks git-only repositories.
 Pooled jj workspaces inherit the opt-in from their main repository root, so an untracked `treehouse.toml` there is enough.
 
-The backend is resolved on every command, and existing pool slots keep the flavor they were created with: changing the opt-in does not convert worktrees already in the pool, and slots of the other flavor are skipped or fail safe rather than being converted or deleted.
+The backend is resolved on every command, and existing pool slots keep the flavor they were created with: changing the opt-in does not convert worktrees already in the pool, and slots of the other flavor are skipped or fail safe rather than being converted.
+Removal is the exception: `destroy` and `prune` remove each slot with the backend matching what the slot actually is (its own `.git` or `.jj` marker), so a git worktree is still cleanly deregistered from git even after opting the repository into jj, and vice versa.
 To migrate a pool after changing the opt-in, `treehouse destroy` the old slots and re-acquire them with `treehouse get`.
 Managing mixed git+jj pools first-class is deferred to a follow-up.
 
