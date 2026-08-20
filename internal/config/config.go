@@ -12,7 +12,12 @@ import (
 type Config struct {
 	MaxTrees int    `toml:"max_trees"`
 	Root     string `toml:"root"`
-	Hooks    Hooks  `toml:"hooks,omitempty"`
+	// VCS selects the version-control backend. Git is the default
+	// everywhere; set "jj" to opt in to the Jujutsu backend for this
+	// repository. Pooled jj workspaces inherit the opt-in from their main
+	// repository root. Read by the vcs package at backend selection time.
+	VCS   string `toml:"vcs,omitempty"`
+	Hooks Hooks  `toml:"hooks,omitempty"`
 }
 
 type Hooks struct {

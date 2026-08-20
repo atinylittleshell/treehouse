@@ -332,6 +332,23 @@ The repo-level config takes precedence for repo-safe settings.
 `treehouse prune --all` can run without a repository, so it uses only the user-level config and does not read per-repo `treehouse.toml` files while sweeping.
 If no config is found, the default pool size is 16.
 
+### Version-control backend (git or Jujutsu)
+
+Treehouse works in git and [Jujutsu (jj)](https://github.com/jj-vcs/jj) repositories.
+In a jj repository, pooled worktrees are [jj workspaces](https://jj-vcs.github.io/jj/latest/working-copy/#workspaces) instead of git worktrees; the pool, lease, and safety machinery is identical.
+
+Git is the default backend everywhere, including in colocated repositories (both `.jj` and `.git`) and `.jj`-only repositories.
+Opt in to the jj backend per repository with `vcs = "jj"` in `treehouse.toml`, or per command with `TREEHOUSE_VCS=jj`.
+Pooled jj workspaces inherit the opt-in from their main repository root, so an untracked `treehouse.toml` there is enough.
+
+jj-backend notes:
+
+- Pooled worktrees are jj workspaces and are not colocated: they contain `.jj` but no `.git`, so run jj commands (not git) inside them.
+- A worktree is considered dirty when its working-copy commit `@` is non-empty or has a description.
+- Resets abandon only the working-copy commit and are recoverable with `jj op restore`.
+- Merge detection uses ancestry; squash-merged work is treated as unmerged, so lifecycle commands err on the side of keeping it.
+- The default branch resolves to the `main`/`master`/`trunk` bookmark, preferring origin.
+
 ### Worktree root
 
 The worktree root can also be set without a config file, and the resolved value follows this precedence (highest first):

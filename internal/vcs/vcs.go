@@ -2,16 +2,26 @@
 // the rest of the codebase needs goes through this package, so the pool
 // lifecycle, commands, and configuration stay backend-agnostic.
 //
-// Today git is the only backend, selected unconditionally, which keeps this
-// package a pure refactor of the previous internal/git call sites. Additional
-// backends plug in by implementing Backend and extending backendFor.
+// Git is the default backend everywhere. The jj backend is strictly an
+// explicit opt-in via the TREEHOUSE_VCS environment variable or the "vcs" key
+// in treehouse.toml; colocated repositories (both .jj and .git) stay on git
+// worktrees, and a .jj-only repository without the opt-in simply keeps git's
+// error behavior. Pooled jj workspaces are .jj-only trees that cannot carry
+// an untracked config file, so they inherit the opt-in from their main
+// repository root, located by reading the .jj/repo pointer — file
+// inspection only; the decision still comes from explicit configuration.
 package vcs
 
 import (
 	"crypto/sha256"
 	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/BurntSushi/toml"
 
 	"github.com/kunchenguid/treehouse/internal/vcs/gitvcs"
+	"github.com/kunchenguid/treehouse/internal/vcs/jjvcs"
 )
 
 // Backend is the set of version-control operations treehouse's lifecycle
@@ -63,14 +73,101 @@ type Backend interface {
 	IsDirty(worktreePath string) (bool, error)
 }
 
-var gitBackend Backend = gitvcs.New()
+var (
+	gitBackend Backend = gitvcs.New()
+	jjBackend  Backend = jjvcs.New()
+)
 
 // backendFor selects the backend responsible for path (a repository root,
-// worktree path, or any directory inside one). Git is currently the only
-// backend, so selection is unconditional; future backends hook in here.
+// worktree path, or any directory inside one). Git is the default
+// everywhere; TREEHOUSE_VCS or a treehouse.toml "vcs" key opts in to jj
+// explicitly. The opt-in is read at the path's marker root and, for a
+// .jj-only tree (such as a pooled jj workspace, whose checkout cannot carry
+// an untracked treehouse.toml), also at the main repository root that its
+// .jj/repo pointer names. Backend choice always comes from that explicit
+// configuration, never from the marker itself; paths outside any repository
+// fall back to git so errors surface exactly as they always did.
 func backendFor(path string) Backend {
-	_ = path
+	dir := path
+	if dir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return gitBackend
+		}
+		dir = cwd
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+
+	root, hasJJ, hasGit := findMarkerRoot(dir)
+	if root == "" {
+		return gitBackend
+	}
+	switch vcsOverride(root) {
+	case "git":
+		return gitBackend
+	case "jj":
+		return jjBackend
+	}
+	if hasJJ && !hasGit {
+		// A workspace's own tree holds no untracked config; the opt-in, if
+		// any, lives at the main repository root the .jj/repo pointer names.
+		if mainRoot, err := jjvcs.MainRootFromWorkspaceRoot(root); err == nil && mainRoot != root {
+			if vcsOverride(mainRoot) == "jj" {
+				return jjBackend
+			}
+		}
+	}
 	return gitBackend
+}
+
+// findMarkerRoot walks up from dir and stops at the first level holding a VCS
+// marker, reporting which markers exist there so the caller can tell a
+// colocated repository (.jj and .git together) from a jj-only one.
+func findMarkerRoot(dir string) (root string, hasJJ, hasGit bool) {
+	for {
+		if info, err := os.Stat(filepath.Join(dir, ".jj")); err == nil && info.IsDir() {
+			hasJJ = true
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			hasGit = true
+		}
+		if hasJJ || hasGit {
+			return dir, hasJJ, hasGit
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false, false
+		}
+		dir = parent
+	}
+}
+
+// vcsOverride returns a forced backend name ("git" or "jj") from the
+// TREEHOUSE_VCS environment variable or the "vcs" key of the repository's
+// treehouse.toml, or "" when selection should stay automatic. The file is
+// read directly here (rather than through internal/config) because config
+// depends on this package.
+func vcsOverride(repoRoot string) string {
+	if v := normalizeVCSName(os.Getenv("TREEHOUSE_VCS")); v != "" {
+		return v
+	}
+	var cfg struct {
+		VCS string `toml:"vcs"`
+	}
+	if _, err := toml.DecodeFile(filepath.Join(repoRoot, "treehouse.toml"), &cfg); err == nil {
+		return normalizeVCSName(cfg.VCS)
+	}
+	return ""
+}
+
+func normalizeVCSName(v string) string {
+	switch v {
+	case "git", "jj":
+		return v
+	}
+	return ""
 }
 
 // FindRepoRoot returns the repository or worktree root for the current

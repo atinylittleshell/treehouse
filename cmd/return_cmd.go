@@ -151,7 +151,7 @@ func resolveReturnPoolDir(wtPath string, explicitPath bool) (string, error) {
 		if explicitPath {
 			return "", errReturnWorktreeUnmanaged
 		}
-		return "", fmt.Errorf("not in a git repository: %w", err)
+		return "", fmt.Errorf("not in a git or jj repository: %w", err)
 	}
 
 	cfg, err := config.Load(repoRoot)

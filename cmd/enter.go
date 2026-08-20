@@ -44,7 +44,7 @@ func enterRunE(cmd *cobra.Command, args []string) error {
 
 	repoRoot, err := vcs.FindRepoRoot()
 	if err != nil {
-		return fmt.Errorf("not in a git repository: %w", err)
+		return fmt.Errorf("not in a git or jj repository: %w", err)
 	}
 
 	cfg, err := config.Load(repoRoot)

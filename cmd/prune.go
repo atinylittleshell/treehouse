@@ -68,7 +68,7 @@ absolute.`,
 
 		repoRoot, err := vcs.FindMainRepoRoot()
 		if err != nil {
-			return fmt.Errorf("not in a git repository: %w", err)
+			return fmt.Errorf("not in a git or jj repository: %w", err)
 		}
 
 		cfg, err := config.Load(repoRoot)
