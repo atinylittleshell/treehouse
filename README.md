@@ -338,8 +338,13 @@ Treehouse works in git and [Jujutsu (jj)](https://github.com/jj-vcs/jj) reposito
 In a jj repository, pooled worktrees are [jj workspaces](https://jj-vcs.github.io/jj/latest/working-copy/#workspaces) instead of git worktrees; the pool, lease, and safety machinery is identical.
 
 Git is the default backend everywhere, including in colocated repositories (both `.jj` and `.git`) and `.jj`-only repositories.
-Opt in to the jj backend per repository with `vcs = "jj"` in `treehouse.toml`, or per command with `TREEHOUSE_VCS=jj`.
+Opt in to the jj backend with `vcs = "jj"`, resolved in this precedence (highest first): the `TREEHOUSE_VCS` environment variable, the repo-level `treehouse.toml`, the user-level `~/.config/treehouse/config.toml`.
+The jj opt-in only applies where a `.jj` directory actually exists; in a plain git repository it is silently ignored and git is used, so a shell-wide `TREEHOUSE_VCS=jj` never breaks git-only repositories.
 Pooled jj workspaces inherit the opt-in from their main repository root, so an untracked `treehouse.toml` there is enough.
+
+The backend is resolved on every command, and existing pool slots keep the flavor they were created with: changing the opt-in does not convert worktrees already in the pool, and slots of the other flavor are skipped or fail safe rather than being converted or deleted.
+To migrate a pool after changing the opt-in, `treehouse destroy` the old slots and re-acquire them with `treehouse get`.
+Managing mixed git+jj pools first-class is deferred to a follow-up.
 
 jj-backend notes:
 

@@ -3,10 +3,15 @@
 // lifecycle, commands, and configuration stay backend-agnostic.
 //
 // Git is the default backend everywhere. The jj backend is strictly an
-// explicit opt-in via the TREEHOUSE_VCS environment variable or the "vcs" key
-// in treehouse.toml; colocated repositories (both .jj and .git) stay on git
-// worktrees, and a .jj-only repository without the opt-in simply keeps git's
-// error behavior. Pooled jj workspaces are .jj-only trees that cannot carry
+// explicit opt-in via the TREEHOUSE_VCS environment variable, the "vcs" key
+// in the repository's treehouse.toml, or the "vcs" key in the user-level
+// ~/.config/treehouse/config.toml, in that precedence order. The jj opt-in
+// only takes effect where a .jj directory actually exists: in a repository
+// without one, an ambient "jj" opt-in silently keeps the git backend, so a
+// shell-wide TREEHOUSE_VCS=jj never breaks plain git repositories. Colocated
+// repositories (both .jj and .git) stay on git worktrees without the opt-in,
+// and a .jj-only repository without the opt-in simply keeps git's error
+// behavior. Pooled jj workspaces are .jj-only trees that cannot carry
 // an untracked config file, so they inherit the opt-in from their main
 // repository root, located by reading the .jj/repo pointer — file
 // inspection only; the decision still comes from explicit configuration.
@@ -80,11 +85,14 @@ var (
 
 // backendFor selects the backend responsible for path (a repository root,
 // worktree path, or any directory inside one). Git is the default
-// everywhere; TREEHOUSE_VCS or a treehouse.toml "vcs" key opts in to jj
-// explicitly. The opt-in is read at the path's marker root and, for a
-// .jj-only tree (such as a pooled jj workspace, whose checkout cannot carry
-// an untracked treehouse.toml), also at the main repository root that its
-// .jj/repo pointer names. Backend choice always comes from that explicit
+// everywhere; TREEHOUSE_VCS, a repo-root treehouse.toml "vcs" key, or a
+// user-level config "vcs" key opts in to jj explicitly (see vcsOverride for
+// the precedence). A jj opt-in applies only when the marker root actually
+// has a .jj directory; otherwise it silently falls back to git. The opt-in
+// is read at the path's marker root and, for a .jj-only tree (such as a
+// pooled jj workspace, whose checkout cannot carry an untracked
+// treehouse.toml), also at the main repository root that its .jj/repo
+// pointer names. Backend choice always comes from that explicit
 // configuration, never from the marker itself; paths outside any repository
 // fall back to git so errors surface exactly as they always did.
 func backendFor(path string) Backend {
@@ -108,7 +116,10 @@ func backendFor(path string) Backend {
 	case "git":
 		return gitBackend
 	case "jj":
-		return jjBackend
+		if hasJJ {
+			return jjBackend
+		}
+		return gitBackend
 	}
 	if hasJJ && !hasGit {
 		// A workspace's own tree holds no untracked config; the opt-in, if
@@ -144,22 +155,33 @@ func findMarkerRoot(dir string) (root string, hasJJ, hasGit bool) {
 	}
 }
 
-// vcsOverride returns a forced backend name ("git" or "jj") from the
-// TREEHOUSE_VCS environment variable or the "vcs" key of the repository's
-// treehouse.toml, or "" when selection should stay automatic. The file is
-// read directly here (rather than through internal/config) because config
-// depends on this package.
+// vcsOverride returns a forced backend name ("git" or "jj") for repoRoot, or
+// "" when selection should stay automatic. Precedence, highest first: the
+// TREEHOUSE_VCS environment variable, the "vcs" key of the repository's
+// treehouse.toml, the "vcs" key of the user-level
+// ~/.config/treehouse/config.toml. The files are read directly here (rather
+// than through internal/config) because config depends on this package.
 func vcsOverride(repoRoot string) string {
 	if v := normalizeVCSName(os.Getenv("TREEHOUSE_VCS")); v != "" {
 		return v
 	}
+	if v := vcsFromFile(filepath.Join(repoRoot, "treehouse.toml")); v != "" {
+		return v
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return vcsFromFile(filepath.Join(home, ".config", "treehouse", "config.toml"))
+	}
+	return ""
+}
+
+func vcsFromFile(path string) string {
 	var cfg struct {
 		VCS string `toml:"vcs"`
 	}
-	if _, err := toml.DecodeFile(filepath.Join(repoRoot, "treehouse.toml"), &cfg); err == nil {
-		return normalizeVCSName(cfg.VCS)
+	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+		return ""
 	}
-	return ""
+	return normalizeVCSName(cfg.VCS)
 }
 
 func normalizeVCSName(v string) string {

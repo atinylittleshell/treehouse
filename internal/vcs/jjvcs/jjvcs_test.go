@@ -119,6 +119,18 @@ func addWorkspace(t *testing.T, repoDir string) string {
 	return wtPath
 }
 
+func TestWorkspaceNamesAreDistinctAndStablePerPath(t *testing.T) {
+	base := t.TempDir()
+	a := workspaceNameFor(filepath.Join(base, "wt1"))
+	b := workspaceNameFor(filepath.Join(base, "wt2"))
+	if a == b {
+		t.Fatalf("expected distinct workspace names for distinct paths, both %q", a)
+	}
+	if again := workspaceNameFor(filepath.Join(base, "wt1")); again != a {
+		t.Fatalf("expected a stable workspace name per path, got %q then %q", a, again)
+	}
+}
+
 func TestGetDefaultBranchLocalOnly(t *testing.T) {
 	requireJJ(t)
 	repoDir := newLocalRepo(t)
