@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -269,5 +270,78 @@ func TestBackendForEnvBeatsRepoConfig(t *testing.T) {
 	t.Setenv("TREEHOUSE_VCS", "jj")
 	if got := backendFor(dir).Name(); got != "jj" {
 		t.Fatalf("expected TREEHOUSE_VCS=jj to beat the repo-level vcs = git, got %q", got)
+	}
+}
+
+// TestRemoveWorktreeDispatchesOnSlotFlavorGitUnderJJOptIn covers the
+// wrong-backend destroy path: a git worktree created before the repository
+// opted in to jj must still be removed by git, deregistering it from
+// .git/worktrees rather than deleting the directory out from under git.
+func TestRemoveWorktreeDispatchesOnSlotFlavorGitUnderJJOptIn(t *testing.T) {
+	if _, err := exec.LookPath("jj"); err != nil {
+		t.Skip("jj is not installed")
+	}
+	isolateJJConfig(t)
+	base := t.TempDir()
+	repoDir := filepath.Join(base, "repo")
+	mustRun(t, base, "git", "init", "-b", "main", repoDir)
+	mustRun(t, repoDir, "git", "-c", "user.name=t", "-c", "user.email=t@e.com",
+		"commit", "--allow-empty", "-m", "init")
+	wtPath := filepath.Join(base, "slot")
+	mustRun(t, repoDir, "git", "worktree", "add", "--detach", wtPath)
+	mustRun(t, repoDir, "jj", "git", "init", "--colocate")
+
+	t.Setenv("TREEHOUSE_VCS", "jj")
+	if err := RemoveWorktree(repoDir, wtPath); err != nil {
+		t.Fatalf("removing a git slot under jj opt-in: %v", err)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Fatal("expected the slot directory to be gone")
+	}
+	out, err := exec.Command("git", "-C", repoDir, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), wtPath) {
+		t.Fatalf("git worktree registration left stale after removal:\n%s", out)
+	}
+}
+
+// TestRemoveWorktreeDispatchesOnSlotFlavorJJWithoutOptIn is the mirror: a jj
+// workspace slot must still be removed by jj (forgetting its registration)
+// even when the repository is no longer opted in.
+func TestRemoveWorktreeDispatchesOnSlotFlavorJJWithoutOptIn(t *testing.T) {
+	if _, err := exec.LookPath("jj"); err != nil {
+		t.Skip("jj is not installed")
+	}
+	isolateJJConfig(t)
+	base := t.TempDir()
+	repoDir := filepath.Join(base, "repo")
+	wsPath := filepath.Join(base, "slot")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, repoDir, "jj", "git", "init")
+	mustRun(t, repoDir, "jj", "bookmark", "create", "main", "-r", "@")
+	// Create the slot the way the pool does: through the jj backend, under
+	// an opt-in that is gone again by removal time.
+	t.Setenv("TREEHOUSE_VCS", "jj")
+	if err := AddWorktree(repoDir, wsPath, "main"); err != nil {
+		t.Fatalf("creating the jj slot: %v", err)
+	}
+	t.Setenv("TREEHOUSE_VCS", "")
+
+	if err := RemoveWorktree(repoDir, wsPath); err != nil {
+		t.Fatalf("removing a jj slot without opt-in: %v", err)
+	}
+	if _, err := os.Stat(wsPath); !os.IsNotExist(err) {
+		t.Fatal("expected the workspace directory to be gone")
+	}
+	out, err := exec.Command("jj", "-R", repoDir, "workspace", "list").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "th-") {
+		t.Fatalf("jj workspace registration left stale after removal:\n%s", out)
 	}
 }

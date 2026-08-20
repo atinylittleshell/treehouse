@@ -366,3 +366,24 @@ func TestDefaultBranchMergeRefLocalOnly(t *testing.T) {
 		t.Fatalf("expected main, got %q", ref)
 	}
 }
+
+// TestRemoveWorktreeRefusesNonJJDirectory pins the deletion guard: a
+// directory that exists but is not a jj workspace must not be deleted.
+func TestRemoveWorktreeRefusesNonJJDirectory(t *testing.T) {
+	requireJJ(t)
+	repoDir := newLocalRepo(t)
+	victim := filepath.Join(t.TempDir(), "not-a-workspace")
+	if err := os.MkdirAll(victim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(victim, "data.txt"), []byte("keep me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := &Backend{}
+	if err := b.RemoveWorktree(repoDir, victim); err == nil {
+		t.Fatal("expected an error removing a non-jj directory")
+	}
+	if _, err := os.Stat(filepath.Join(victim, "data.txt")); err != nil {
+		t.Fatalf("directory contents must survive a refused removal: %v", err)
+	}
+}

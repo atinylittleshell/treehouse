@@ -224,6 +224,15 @@ func (*Backend) RemoveWorktree(repoRoot, path string) error {
 	if err != nil {
 		return err
 	}
+	// Refuse to delete a directory that exists but is not a jj workspace:
+	// removing a git worktree here would delete its files while leaving the
+	// .git/worktrees registration stale. A path that is already gone still
+	// gets its stale registration forgotten below.
+	if _, statErr := os.Stat(absPath); statErr == nil {
+		if info, jjErr := os.Stat(filepath.Join(absPath, ".jj")); jjErr != nil || !info.IsDir() {
+			return fmt.Errorf("refusing to remove %s: not a jj workspace", absPath)
+		}
+	}
 	_, _ = runJJ(repoRoot, "workspace", "forget", workspaceNameFor(absPath))
 	return os.RemoveAll(absPath)
 }

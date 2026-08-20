@@ -236,12 +236,31 @@ func PruneWorktrees(repoRoot string) error { return backendFor(repoRoot).PruneWo
 
 // RemoveWorktree removes a worktree even if it has local changes.
 func RemoveWorktree(repoRoot, path string) error {
-	return backendFor(repoRoot).RemoveWorktree(repoRoot, path)
+	return backendForRemoval(repoRoot, path).RemoveWorktree(repoRoot, path)
 }
 
 // RemoveCleanWorktree removes a worktree, refusing if it is not clean.
 func RemoveCleanWorktree(repoRoot, path string) error {
-	return backendFor(repoRoot).RemoveCleanWorktree(repoRoot, path)
+	return backendForRemoval(repoRoot, path).RemoveCleanWorktree(repoRoot, path)
+}
+
+// backendForRemoval dispatches removal on what the worktree actually is (its
+// own marker), not on the repository's configured backend. A pool can
+// legitimately hold slots of both flavors after an opt-in change, and routing
+// a git worktree through jj removal deletes its directory without
+// deregistering it from .git/worktrees (the reverse direction errors and
+// leaves the slot stranded). This is artifact-typed dispatch, not backend
+// selection: creating worktrees still follows the explicit opt-in. A missing
+// or empty path falls back to the repository's backend so error surfacing is
+// unchanged.
+func backendForRemoval(repoRoot, path string) Backend {
+	if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
+		return gitBackend
+	}
+	if info, err := os.Stat(filepath.Join(path, ".jj")); err == nil && info.IsDir() {
+		return jjBackend
+	}
+	return backendFor(repoRoot)
 }
 
 // Fetch updates refs from origin when an origin remote exists.
