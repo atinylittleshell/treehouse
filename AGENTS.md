@@ -2,7 +2,7 @@
 
 ## What is this?
 
-Treehouse is a Go CLI tool that manages a pool of git worktrees for parallel AI coding agent workflows. It maintains reusable, pre-warmed worktrees so agents get isolated environments instantly.
+Treehouse is a Go CLI tool that manages a pool of git worktrees (or, with the opt-in jj backend, Jujutsu workspaces) for parallel AI coding agent workflows. It maintains reusable, pre-warmed worktrees so agents get isolated environments instantly.
 
 ## Project Structure
 
@@ -11,7 +11,9 @@ Treehouse is a Go CLI tool that manages a pool of git worktrees for parallel AI 
 - `internal/config/` - config file loading (`treehouse.toml`)
 - `internal/hooks/` - user-configured lifecycle hook command execution
 - `internal/pool/` - pool manager (acquire, release, list, destroy, prune) + state file
-- `internal/git/` - git operations (shells out to `git` binary)
+- `internal/vcs/` - VCS backend seam: the `vcs.Backend` interface, backend selection (`backendFor`), and package-level wrappers the rest of the code calls
+- `internal/vcs/gitvcs/` - git backend (shells out to `git` binary)
+- `internal/vcs/jjvcs/` - Jujutsu backend (shells out to `jj` binary; pooled worktrees are jj workspaces)
 - `internal/process/` - in-use detection and lingering process termination for worktrees
 - `internal/shell/` - subshell spawning
 - `internal/ui/` - Y/n confirmation prompts
@@ -38,14 +40,14 @@ make test
 - Detached HEAD worktrees reset to whichever of local or origin default branch is further ahead (prefers origin on divergence)
 - In-use detection uses process scanning plus short-lived persisted owner reservations for lifecycle operations
 - Durable leases are a separate, process-independent reservation: `WorktreeEntry.Leased`/`LeaseID`/`LeaseHolder`/`LeasedAt` persist in the state file with `omitempty`. Every acquisition generates a new immutable 128-bit random `LeaseID`; older state without it loads with an empty ID and remains releasable through the legacy unconditional path. A lease is NOT derived from live processes, so it survives with zero processes inside the worktree and `healState` never clears it. Leased worktrees are skipped by `Acquire` and `prune`, classified `DestroyLeased` by destroy (removable only when the exact path is named with `--include-leased`, NEVER via `--all`), surfaced by `status` as `StatusLeased`, and cleared by `Release` (`return`)
-- `destroy` is safe-by-default and mirrors `prune`: dry-run unless `--yes`, narrow explicit targets (`destroy <path>` for one worktree; `destroy <pool> --all` for that pool only - there is NO cross-pool/global destroy, and `--all` with no pool target is an error). The old blunt `--force` flag is REMOVED (this was the v2.0.0 breaking change); each risk class is its own opt-in: `--include-unlanded` (dirty, unmerged, or unverified), `--include-in-use` (running process or owner reservation; processes terminated cleanly first), `--include-leased` (leased, single named path only). A bare `--all --yes` removes only the disposable set (merged, clean, idle, unleased) and skips the rest with the flag that would include each. Bulk skips exit 0; a single-target skip exits non-zero. Entry points: `pool.DestroyWorktree` (single path, `allowLeased=true`) and `pool.DestroyPool` (bulk, `allowLeased=false`). Both share `classifyForDestroy` in `internal/pool/destroy.go`, which reuses prune's classification primitives (`ownerAlive`, `process.FindProcessesInWorktree`, `backingRepositoryMissing`, `git.IsDirty`, `git.IsHeadMergedIntoRef` against the `resolvePruneDefaultRef` ref) so destroy and prune agree on leased/in-use/unlanded/unverified/disposable. Removal keeps the same two-phase reservation as prune (reserve under flock, run `pre_destroy` hooks, remove only worktrees whose `sameDestroyReservation` still holds), so a worktree re-acquired during its hook is never deleted
+- `destroy` is safe-by-default and mirrors `prune`: dry-run unless `--yes`, narrow explicit targets (`destroy <path>` for one worktree; `destroy <pool> --all` for that pool only - there is NO cross-pool/global destroy, and `--all` with no pool target is an error). The old blunt `--force` flag is REMOVED (this was the v2.0.0 breaking change); each risk class is its own opt-in: `--include-unlanded` (dirty, unmerged, or unverified), `--include-in-use` (running process or owner reservation; processes terminated cleanly first), `--include-leased` (leased, single named path only). A bare `--all --yes` removes only the disposable set (merged, clean, idle, unleased) and skips the rest with the flag that would include each. Bulk skips exit 0; a single-target skip exits non-zero. Entry points: `pool.DestroyWorktree` (single path, `allowLeased=true`) and `pool.DestroyPool` (bulk, `allowLeased=false`). Both share `classifyForDestroy` in `internal/pool/destroy.go`, which reuses prune's classification primitives (`ownerAlive`, `process.FindProcessesInWorktree`, `backingRepositoryMissing`, `vcs.IsDirty`, `vcs.IsHeadMergedIntoRef` against the `resolvePruneDefaultRef` ref) so destroy and prune agree on leased/in-use/unlanded/unverified/disposable. Removal keeps the same two-phase reservation as prune (reserve under flock, run `pre_destroy` hooks, remove only worktrees whose `sameDestroyReservation` still holds), so a worktree re-acquired during its hook is never deleted
 - `get --lease` (see `getLeaseRunE`) is the non-interactive acquire: it opens no subshell, routes hook output and banners to stderr, and keeps path-only stdout unchanged. `get --lease --json` returns `pool.AcquireLeaseInfo`, and `status --json` exposes the same `lease_id`, holder, and timestamp. Conditional return uses `pool.ReleaseConditional` with `--if-lease-id` and optional `--if-lease-holder`; comparison, caller-side preparation, reset, and final clear share one `WithStateLock`, while return without conditions keeps the legacy path-only behavior
 - Dirty checks include untracked files even when repository config hides them from normal `git status` output
 - Prune deletes only idle managed worktrees that are clean and whose HEAD is merged into the default branch; dry run is the default
 - Prune reports unsafe idle worktrees in grouped, stable categories and keeps raw git diagnostics for verbose output instead of default output
 - Prune treats backing-repository-missing linked worktrees as orphans; they are only deletable with explicit `--prune-orphans --yes`, and each candidate warns that content could not be verified
 - Prune never treats an unreachable origin as a deletable orphan; those worktrees stay skipped because the repository may still be valid
-- Global prune enumerates managed pool directories under the user-level treehouse root and derives each worktree's owning repository from git metadata instead of relying on the current directory
+- Global prune enumerates managed pool directories under the user-level treehouse root and derives each worktree's owning repository from VCS metadata instead of relying on the current directory
 - Global prune loads user-level config and hooks only because it can run without a repository context
 - State file tracks pool membership, temporary owner/destroy reservations, and explicit durable leases.
   It still does not infer long-term usage from processes.
@@ -55,8 +57,10 @@ make test
   Since the real reservation (owner vs. lease vs. idle) is unknowable from disk alone, every recovered entry is marked `Leased` with a `recoveredLeaseHolder` placeholder.
   `Acquire` and `prune` skip recovered entries, and `destroy` only removes one via a single named `--include-leased` target.
   A human clears a recovered entry with `treehouse status` then `treehouse return` (or `destroy --include-leased`) once verified
-- Git operations shell out to `git` (go-git has incomplete worktree support)
-- Self-healing: stale state entries are auto-removed, and `get` prunes stale git worktree registrations before adding a worktree
+- All VCS operations go through the `internal/vcs` seam (`vcs.Backend`, 17 operations); backends shell out to the `git`/`jj` binaries (go-git has incomplete worktree support). Git is the default backend everywhere, including colocated (`.jj`+`.git`) and `.jj`-only repos; jj is a strict opt-in via `vcs = "jj"` in config or `TREEHOUSE_VCS=jj` (precedence: env, repo `treehouse.toml`, user config), effective only where a `.jj` directory exists. Pooled jj workspaces are `.jj`-only and cannot carry an untracked config file, so `backendFor` resolves their opt-in by reading the `.jj/repo` pointer and checking config at the main repository root — file inspection only, never backend selection from a marker
+- jj backend semantics: dirty means the working-copy commit `@` is non-empty or described; reset is `jj abandon -r @` then `jj new <default>` (recoverable via `jj op restore`); merged-detection is the ancestry revset `@- & ~::<ref>` being empty, so squash-merged work deliberately reads unmerged (fail-safe); default branch resolution prefers origin bookmarks `main`/`master`/`trunk` and never uses bare `trunk()` (it falls back to `root()` without remotes); the workspace store pointer is rewritten to an absolute path; `PruneWorktrees` is a documented no-op with self-healing at add time. jj tests isolate `JJ_CONFIG` (with `git.colocate=false`) and skip when `jj` is not on PATH, so CI without jj is unaffected
+- The pool root is made self-ignoring (`.gitignore` containing `*` written inside it) because non-colocated jj repos never read `.git/info/exclude`; inside git repos the `info/exclude` entry is still added too (`config.EnsureExcluded`)
+- Self-healing: stale state entries are auto-removed, and `get` prunes stale worktree registrations before adding a worktree (the git backend via `git worktree prune`; the jj backend by forgetting a stale same-path workspace registration at add time)
 
 ## Contribution Gate
 
@@ -86,6 +90,10 @@ max_trees = 16
 # Optional worktree root.
 # Relative roots need a repo context; use an absolute user-level root for global prune.
 # root = "$HOME/worktrees"
+
+# Optional VCS backend. Git is the default everywhere; "jj" opts in to the
+# Jujutsu backend (or per-command with TREEHOUSE_VCS=jj).
+# vcs = "jj"
 
 # User-level config only:
 [hooks]

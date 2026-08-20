@@ -118,7 +118,7 @@ func PruneWithOptions(repoRoot, poolDir string, options PruneOptions) (PruneResu
 }
 
 // PrunePool prunes one pool by deriving each worktree's repository context from
-// git metadata.
+// VCS metadata.
 // Worktrees whose repository or default branch cannot be resolved are reported
 // as skipped.
 // Backing-repository-missing orphans are reported as skipped; use
@@ -132,7 +132,7 @@ func PrunePool(poolDir string, dryRun bool, preDestroy []string) (PruneResult, e
 }
 
 // PrunePoolWithOptions prunes one pool by deriving each worktree's repository
-// context from git metadata and applying the supplied options.
+// context from VCS metadata and applying the supplied options.
 func PrunePoolWithOptions(poolDir string, options PruneOptions) (PruneResult, error) {
 	return prunePool(poolDir, options, worktreePruneContextResolver())
 }

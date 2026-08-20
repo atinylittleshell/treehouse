@@ -254,9 +254,9 @@ Bulk `destroy --all` and prune leave recovered entries alone.
 By default, it lists stale idle managed worktrees that would be deleted and shows the reclaimable disk space.
 Pass `treehouse prune --yes` to delete those worktrees.
 
-By default, prune only inspects the current repository's pool and must be run inside a git repo.
+By default, prune only inspects the current repository's pool and must be run inside a repository.
 Pass `treehouse prune --all` or `treehouse prune --global` to inspect every managed pool under the user-level treehouse root from any directory.
-Global prune reads the user-level config and hooks, derives each worktree's owning repository from git metadata, then fetches and checks merge safety against that repository.
+Global prune reads the user-level config and hooks, derives each worktree's owning repository from version-control metadata, then fetches and checks merge safety against that repository.
 Without `--prune-orphans`, pass `treehouse prune --all --yes` to delete only the globally safe stale candidates.
 
 Prune ignores worktrees that are currently in use, leased, or reserved by another lifecycle operation.
