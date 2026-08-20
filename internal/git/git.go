@@ -3,11 +3,21 @@ package git
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+// ErrHEADLocked reports that another Git operation owns the worktree HEAD
+// lock, so guarded release must leave the lease intact and be retried.
+var ErrHEADLocked = errors.New("worktree HEAD is locked")
+
+// ErrUnsupportedRefStorage reports a ref backend for which Treehouse cannot
+// hold Git's HEAD lock across the guarded state transition.
+var ErrUnsupportedRefStorage = errors.New("unsupported Git ref storage for guarded release")
 
 // FindMainRepoRoot returns the main repository root for the current working
 // directory. Inside a linked worktree it resolves back to the owning
@@ -309,6 +319,118 @@ func IsHeadMergedIntoRef(worktreePath, ref string) (bool, error) {
 		return isHeadContentMergedIntoRef(worktreePath, ref)
 	}
 	return false, fmt.Errorf("git merge-base --is-ancestor HEAD %s: %s", ref, strings.TrimSpace(string(out)))
+}
+
+// IsHeadReferenced reports whether HEAD is reachable from a durable local,
+// remote-tracking, or tag ref. A detached commit with no such ref can be lost
+// when a pooled worktree is reset for its next acquisition.
+func IsHeadReferenced(worktreePath string) (bool, error) {
+	out, err := runGit(
+		worktreePath,
+		"for-each-ref",
+		"--format=%(refname)",
+		"--contains=HEAD",
+		"refs/heads",
+		"refs/remotes",
+		"refs/tags",
+	)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
+}
+
+// GuardedRecoveryRef returns Treehouse's private recovery ref for a lease.
+// Hashing keeps arbitrary legacy/state-file identities valid as ref names.
+func GuardedRecoveryRef(leaseID string) string {
+	digest := sha256.Sum256([]byte(leaseID))
+	return fmt.Sprintf("refs/treehouse/guarded/%x", digest)
+}
+
+// WithHEADLock prevents Git operations from changing a worktree's HEAD while
+// fn runs. Guarded release uses the same lock-file protocol as Git so the HEAD
+// validated and preserved by fn cannot change before the lease state is
+// committed. A crash may leave the lock behind, which safely prevents reuse
+// until the interrupted operation is investigated.
+func WithHEADLock(worktreePath string, fn func() error) (err error) {
+	refStorage, err := refStorageFormat(worktreePath)
+	if err != nil {
+		return fmt.Errorf("determine Git ref storage: %w", err)
+	}
+	if refStorage != "files" {
+		return fmt.Errorf("%w: %s", ErrUnsupportedRefStorage, refStorage)
+	}
+
+	headPath, err := runGit(worktreePath, "rev-parse", "--path-format=absolute", "--git-path", "HEAD")
+	if err != nil {
+		headPath, err = runGit(worktreePath, "rev-parse", "--git-path", "HEAD")
+		if err != nil {
+			return err
+		}
+		if !filepath.IsAbs(headPath) {
+			headPath = filepath.Join(worktreePath, headPath)
+		}
+	}
+
+	lockPath := filepath.Clean(filepath.FromSlash(headPath)) + ".lock"
+	lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("%w: %s", ErrHEADLocked, lockPath)
+		}
+		return fmt.Errorf("lock worktree HEAD: %w", err)
+	}
+	defer func() {
+		if closeErr := lock.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close worktree HEAD lock: %w", closeErr)
+		}
+		if removeErr := os.Remove(lockPath); err == nil && removeErr != nil {
+			err = fmt.Errorf("remove worktree HEAD lock: %w", removeErr)
+		}
+	}()
+
+	return fn()
+}
+
+func refStorageFormat(worktreePath string) (string, error) {
+	if format, err := runGit(worktreePath, "rev-parse", "--show-ref-format"); err == nil && format != "" {
+		return format, nil
+	}
+	if format, err := runGit(worktreePath, "config", "--get", "extensions.refStorage"); err == nil && format != "" {
+		return format, nil
+	}
+	// Git versions predating --show-ref-format support only the files backend.
+	return "files", nil
+}
+
+// PreserveHEAD writes a lease-specific recovery ref before guarded release.
+// The ref fences a concurrent deletion of the caller's last branch or tag and
+// is intentionally retained so a later worktree reset cannot abandon HEAD. A
+// retry is idempotent only at the same HEAD; the ref is never overwritten.
+func PreserveHEAD(worktreePath, leaseID string) (string, error) {
+	ref := GuardedRecoveryRef(leaseID)
+	head, err := runGit(worktreePath, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return "", err
+	}
+	if existing, err := runGit(worktreePath, "rev-parse", "--verify", ref+"^{commit}"); err == nil {
+		if existing != head {
+			return "", fmt.Errorf("recovery ref %s already protects different HEAD %s", ref, existing)
+		}
+		return ref, nil
+	}
+
+	// An empty expected-old value is Git's hash-format-independent
+	// create-only compare-and-swap. If another process wins the race, accept
+	// only the exact same target; never overwrite a previously protected HEAD.
+	if _, err := runGit(worktreePath, "update-ref", ref, head, ""); err != nil {
+		existing, readErr := runGit(worktreePath, "rev-parse", "--verify", ref+"^{commit}")
+		if readErr == nil && existing == head {
+			return ref, nil
+		}
+		return "", err
+	}
+	return ref, nil
 }
 
 func isHeadContentMergedIntoRef(worktreePath, ref string) (bool, error) {

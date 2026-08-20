@@ -222,6 +222,33 @@ func runTreehouseFromDir(t *testing.T, repoDir, workDir, homeDir string, extraEn
 	return outBuf.String(), errBuf.String(), exitCode
 }
 
+func runTreehouseThroughShell(t *testing.T, repoDir, workDir, homeDir string, args ...string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return runTreehouseFromDir(t, repoDir, workDir, homeDir, nil, args...)
+	}
+
+	// Commands after Treehouse prevent the shell from replacing itself with
+	// the final external command, so it remains an observable parent.
+	shellArgs := []string{"-c", `bin=$1; shift; "$bin" "$@"; result=$?; :; exit "$result"`, "treehouse-guarded-test", treehouseBin}
+	shellArgs = append(shellArgs, args...)
+	cmd := exec.Command("sh", shellArgs...)
+	cmd.Dir = workDir
+	cmd.Env = buildEnv(homeDir)
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	if err == nil {
+		return outBuf.String(), errBuf.String(), 0
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return outBuf.String(), errBuf.String(), exitErr.ExitCode()
+	}
+	t.Fatalf("failed to execute treehouse through shell: %v", err)
+	return "", "", -1
+}
+
 // buildEnv constructs an environment for a treehouse subprocess, overriding
 // HOME/USERPROFILE to the test homeDir and suppressing update checks.
 func buildEnv(homeDir string, extra ...string) []string {
@@ -774,6 +801,86 @@ func TestReturnConditionalLeaseIdentityLifecycle(t *testing.T) {
 		"--if-lease-id", current.LeaseID, "--if-lease-holder", current.LeaseHolder, current.Path)
 	if code != 0 {
 		t.Fatalf("current identity did not release, code=%d stderr=%q", code, stderr)
+	}
+}
+
+func TestReturnGuardedFailsClosedAndPreservesCleanCommits(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	lease := acquireLeaseJSON(t, repoDir, homeDir, "automation")
+	poolDir := filepath.Dir(filepath.Dir(lease.Path))
+	statePath := filepath.Join(poolDir, "treehouse-state.json")
+
+	_, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "return", "--guarded", lease.Path)
+	if code == 0 || !strings.Contains(stderr, "--guarded requires --if-lease-id") {
+		t.Fatalf("guarded return without identity should refuse, code=%d stderr=%q", code, stderr)
+	}
+	_, stderr, code = runTreehouse(t, repoDir, homeDir, nil, "return", "--guarded", "--force",
+		"--if-lease-id", lease.LeaseID, lease.Path)
+	if code == 0 || !strings.Contains(stderr, "mutually exclusive") {
+		t.Fatalf("guarded force should refuse, code=%d stderr=%q", code, stderr)
+	}
+
+	dirtyPath := filepath.Join(lease.Path, "must-survive.txt")
+	if err := os.WriteFile(dirtyPath, []byte("preserve\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stateBefore, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The return process and its parent shell both have their cwd in the
+	// worktree. Neither is an unrelated user of the lease.
+	_, stderr, code = runTreehouseThroughShell(t, repoDir, lease.Path, homeDir, "return", "--guarded",
+		"--if-lease-id", lease.LeaseID, "--if-lease-holder", lease.LeaseHolder, lease.Path)
+	if code == 0 || !strings.Contains(stderr, "worktree is dirty") {
+		t.Fatalf("guarded dirty return should refuse, code=%d stderr=%q", code, stderr)
+	}
+	assertReturnRefusalDidNotMutate(t, statePath, stateBefore, dirtyPath)
+
+	gitCmd(t, lease.Path, "add", "must-survive.txt")
+	gitCmd(t, lease.Path, "commit", "-m", "preserve work")
+	headBefore := gitCmd(t, lease.Path, "rev-parse", "HEAD")
+	stateBefore, err = os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, code = runTreehouse(t, repoDir, homeDir, nil, "return", "--guarded",
+		"--if-lease-id", lease.LeaseID, "--if-lease-holder", lease.LeaseHolder, lease.Path)
+	if code == 0 || !strings.Contains(stderr, "HEAD is not referenced") {
+		t.Fatalf("guarded unreferenced return should refuse, code=%d stderr=%q", code, stderr)
+	}
+	assertReturnRefusalDidNotMutate(t, statePath, stateBefore, dirtyPath)
+	gitCmd(t, lease.Path, "branch", "preserved/automation", "HEAD")
+
+	_, stderr, code = runTreehouse(t, repoDir, homeDir, nil, "return", "--guarded",
+		"--if-lease-id", lease.LeaseID, "--if-lease-holder", lease.LeaseHolder, lease.Path)
+	if code != 0 || !strings.Contains(stderr, "Worktree returned to pool") {
+		t.Fatalf("guarded clean return failed, code=%d stderr=%q", code, stderr)
+	}
+	if headAfter := gitCmd(t, lease.Path, "rev-parse", "HEAD"); headAfter != headBefore {
+		t.Fatalf("guarded return reset HEAD: before=%s after=%s", headBefore, headAfter)
+	}
+	if data, err := os.ReadFile(dirtyPath); err != nil || string(data) != "preserve\n" {
+		t.Fatalf("guarded return did not preserve committed file: data=%q err=%v", data, err)
+	}
+	recoveryRefs := strings.Fields(gitCmd(t, lease.Path, "for-each-ref", "--format=%(refname)", "refs/treehouse/guarded"))
+	if len(recoveryRefs) != 1 {
+		t.Fatalf("guarded return recovery refs = %v, want exactly one", recoveryRefs)
+	}
+	if recovered := gitCmd(t, lease.Path, "rev-parse", recoveryRefs[0]); recovered != headBefore {
+		t.Fatalf("guarded recovery ref points to %s, want %s", recovered, headBefore)
+	}
+
+	statusOut, statusErr, code := runTreehouse(t, repoDir, homeDir, nil, "status", "--json")
+	if code != 0 {
+		t.Fatalf("status --json failed (code %d): %s", code, statusErr)
+	}
+	var statuses []statusJSONResult
+	if err := json.Unmarshal([]byte(statusOut), &statuses); err != nil {
+		t.Fatalf("status --json returned invalid JSON %q: %v", statusOut, err)
+	}
+	if len(statuses) != 1 || statuses[0].Status != "available" || statuses[0].LeaseID != "" {
+		t.Fatalf("guarded return did not clear lease: %#v", statuses)
 	}
 }
 

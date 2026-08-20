@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kunchenguid/treehouse/internal/git"
 	"github.com/kunchenguid/treehouse/internal/process"
 )
 
@@ -75,6 +76,17 @@ func runGit(t *testing.T, dir string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
 	}
+}
+
+func runGitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
 }
 
 func TestAcquire_RunsPostCreateHookInWorktree(t *testing.T) {
@@ -1885,6 +1897,151 @@ func TestRelease_ClearsLease(t *testing.T) {
 	}
 	if reused != wtPath {
 		t.Fatalf("expected released worktree %s to be reused, got %s", wtPath, reused)
+	}
+}
+
+func TestReleaseGuarded_RequiresLeaseIdentity(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	lease, err := AcquireLeaseInfo(repoDir, poolDir, 4, nil, "automation")
+	if err != nil {
+		t.Fatalf("AcquireLeaseInfo failed: %v", err)
+	}
+
+	err = ReleaseGuarded(poolDir, lease.Path, ReleasePreconditions{})
+	if err == nil || !strings.Contains(err.Error(), "requires an expected lease identity") {
+		t.Fatalf("ReleaseGuarded without identity = %v, want identity error", err)
+	}
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Worktrees[0].Leased || state.Worktrees[0].LeaseID != lease.LeaseID {
+		t.Fatalf("identity refusal mutated lease: %#v", state.Worktrees[0])
+	}
+}
+
+func TestReleaseGuarded_RejectsDirtyWorktree(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	lease, err := AcquireLeaseInfo(repoDir, poolDir, 4, nil, "automation")
+	if err != nil {
+		t.Fatalf("AcquireLeaseInfo failed: %v", err)
+	}
+	dirtyPath := filepath.Join(lease.Path, "keep-me.txt")
+	if err := os.WriteFile(dirtyPath, []byte("important\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = ReleaseGuarded(poolDir, lease.Path, ReleasePreconditions{ExpectedLeaseID: &lease.LeaseID})
+	if !errors.Is(err, ErrGuardedReleaseDirty) {
+		t.Fatalf("ReleaseGuarded dirty worktree = %v, want ErrGuardedReleaseDirty", err)
+	}
+	if data, err := os.ReadFile(dirtyPath); err != nil || string(data) != "important\n" {
+		t.Fatalf("guarded refusal did not preserve dirty file: data=%q err=%v", data, err)
+	}
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Worktrees[0].Leased || state.Worktrees[0].LeaseID != lease.LeaseID {
+		t.Fatalf("dirty refusal mutated lease: %#v", state.Worktrees[0])
+	}
+}
+
+func TestReleaseGuarded_RejectsInUseWithoutTerminatingProcess(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	lease, err := AcquireLeaseInfo(repoDir, poolDir, 4, nil, "automation")
+	if err != nil {
+		t.Fatalf("AcquireLeaseInfo failed: %v", err)
+	}
+	holder := startCwdHolder(t, lease.Path)
+
+	err = ReleaseGuarded(poolDir, lease.Path, ReleasePreconditions{ExpectedLeaseID: &lease.LeaseID})
+	if !errors.Is(err, ErrGuardedReleaseInUse) {
+		t.Fatalf("ReleaseGuarded in-use worktree = %v, want ErrGuardedReleaseInUse", err)
+	}
+	if holder.ProcessState != nil {
+		t.Fatalf("guarded refusal terminated cwd holder: %v", holder.ProcessState)
+	}
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Worktrees[0].Leased || state.Worktrees[0].LeaseID != lease.LeaseID {
+		t.Fatalf("in-use refusal mutated lease: %#v", state.Worktrees[0])
+	}
+}
+
+func TestReleaseGuarded_ClearsLeaseWithoutResettingCleanWork(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	lease, err := AcquireLeaseInfo(repoDir, poolDir, 4, nil, "automation")
+	if err != nil {
+		t.Fatalf("AcquireLeaseInfo failed: %v", err)
+	}
+	preservedPath := filepath.Join(lease.Path, "preserved.txt")
+	if err := os.WriteFile(preservedPath, []byte("preserved by commit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, lease.Path, "add", "preserved.txt")
+	runGit(t, lease.Path, "commit", "-m", "preserve work")
+	headBefore := strings.TrimSpace(runGitOutput(t, lease.Path, "rev-parse", "HEAD"))
+
+	preconditions := ReleasePreconditions{
+		ExpectedLeaseID:     &lease.LeaseID,
+		ExpectedLeaseHolder: &lease.LeaseHolder,
+	}
+	err = ReleaseGuarded(poolDir, lease.Path, preconditions)
+	if !errors.Is(err, ErrGuardedReleaseUnreferenced) {
+		t.Fatalf("ReleaseGuarded unreferenced HEAD = %v, want ErrGuardedReleaseUnreferenced", err)
+	}
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Worktrees[0].Leased || state.Worktrees[0].LeaseID != lease.LeaseID {
+		t.Fatalf("unreferenced refusal mutated lease: %#v", state.Worktrees[0])
+	}
+	runGit(t, lease.Path, "branch", "preserved/automation", "HEAD")
+	if err := git.WithHEADLock(lease.Path, func() error {
+		err := ReleaseGuarded(poolDir, lease.Path, preconditions)
+		if !errors.Is(err, ErrGuardedReleaseInUse) {
+			t.Fatalf("ReleaseGuarded with concurrent Git operation = %v, want ErrGuardedReleaseInUse", err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("hold worktree HEAD lock: %v", err)
+	}
+	state, err = ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Worktrees[0].Leased || state.Worktrees[0].LeaseID != lease.LeaseID {
+		t.Fatalf("HEAD lock refusal mutated lease: %#v", state.Worktrees[0])
+	}
+
+	if err := ReleaseGuarded(poolDir, lease.Path, preconditions); err != nil {
+		t.Fatalf("ReleaseGuarded failed: %v", err)
+	}
+	if headAfter := strings.TrimSpace(runGitOutput(t, lease.Path, "rev-parse", "HEAD")); headAfter != headBefore {
+		t.Fatalf("guarded release reset HEAD: before=%s after=%s", headBefore, headAfter)
+	}
+	if data, err := os.ReadFile(preservedPath); err != nil || string(data) != "preserved by commit\n" {
+		t.Fatalf("guarded release did not preserve committed work: data=%q err=%v", data, err)
+	}
+	recoveryRefs := strings.Fields(runGitOutput(
+		t, lease.Path, "for-each-ref", "--format=%(refname)", "refs/treehouse/guarded",
+	))
+	if len(recoveryRefs) != 1 {
+		t.Fatalf("guarded release recovery refs = %v, want exactly one", recoveryRefs)
+	}
+	if recovered := strings.TrimSpace(runGitOutput(t, lease.Path, "rev-parse", recoveryRefs[0])); recovered != headBefore {
+		t.Fatalf("guarded recovery ref points to %s, want %s", recovered, headBefore)
+	}
+	state, err = ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Worktrees[0].Leased || state.Worktrees[0].LeaseID != "" {
+		t.Fatalf("guarded release did not clear lease: %#v", state.Worktrees[0])
 	}
 }
 

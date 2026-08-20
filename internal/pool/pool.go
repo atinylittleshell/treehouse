@@ -253,6 +253,18 @@ func markAcquired(wt *WorktreeEntry, opts acquireOptions) error {
 // identifies the worktree's current lease.
 var ErrLeasePreconditionFailed = errors.New("lease precondition failed")
 
+var (
+	// ErrGuardedReleaseInUse reports that guarded release preserved a lease
+	// because a process still has a cwd inside its worktree.
+	ErrGuardedReleaseInUse = errors.New("guarded release: worktree is in use")
+	// ErrGuardedReleaseDirty reports that guarded release preserved a lease
+	// because tracked or untracked work remains in its worktree.
+	ErrGuardedReleaseDirty = errors.New("guarded release: worktree is dirty")
+	// ErrGuardedReleaseUnreferenced reports that guarded release preserved a
+	// lease because HEAD is not reachable from a durable Git ref.
+	ErrGuardedReleaseUnreferenced = errors.New("guarded release: HEAD is not referenced")
+)
+
 // ReleasePreconditions optionally constrain a release to the current lease.
 // Pointer fields distinguish an omitted condition from an expected empty value.
 type ReleasePreconditions struct {
@@ -276,6 +288,71 @@ func ValidateReleasePreconditions(poolDir, worktreePath string, preconditions Re
 			return err
 		}
 		_, err = releasableWorktree(&state, worktreePath, preconditions)
+		return err
+	})
+}
+
+// ReleaseGuarded clears an exact durable lease only when the worktree is idle
+// and clean. On success it writes a lease-specific Git recovery ref and clears
+// the lease. Unlike ReleaseConditional it deliberately does not terminate
+// processes, detach HEAD, or reset/clean the worktree. This makes it suitable
+// for non-interactive automation that must fail closed instead of discarding
+// work. The checks, recovery ref, and lease clear share the pool state lock, so
+// another Treehouse lifecycle operation cannot interleave. Cleanliness and
+// preservation also run under Git's worktree HEAD lock, preventing a Git
+// operation from moving the verified commit before the state update. If other
+// activity changes files afterward, the later dirty or in-use scan in Acquire
+// keeps that worktree out of circulation.
+func ReleaseGuarded(poolDir, worktreePath string, preconditions ReleasePreconditions) error {
+	if preconditions.ExpectedLeaseID == nil || *preconditions.ExpectedLeaseID == "" {
+		return fmt.Errorf("guarded release requires an expected lease identity")
+	}
+	return WithStateLock(poolDir, func() error {
+		state, err := ReadState(poolDir)
+		if err != nil {
+			return err
+		}
+		wt, err := releasableWorktree(&state, worktreePath, preconditions)
+		if err != nil {
+			return err
+		}
+
+		processes, err := process.FindProcessesInWorktree(worktreePath)
+		if err != nil {
+			return fmt.Errorf("scan worktree processes: %w", err)
+		}
+		processes, err = process.ExcludeCurrentProcessAncestry(processes)
+		if err != nil {
+			return fmt.Errorf("identify guarded return process ancestry: %w", err)
+		}
+		if len(processes) > 0 {
+			return fmt.Errorf("%w: %s", ErrGuardedReleaseInUse, worktreePath)
+		}
+		err = git.WithHEADLock(worktreePath, func() error {
+			dirty, err := git.IsDirty(worktreePath)
+			if err != nil {
+				return fmt.Errorf("check worktree cleanliness: %w", err)
+			}
+			if dirty {
+				return fmt.Errorf("%w: %s", ErrGuardedReleaseDirty, worktreePath)
+			}
+			referenced, err := git.IsHeadReferenced(worktreePath)
+			if err != nil {
+				return fmt.Errorf("check whether worktree HEAD is referenced: %w", err)
+			}
+			if !referenced {
+				return fmt.Errorf("%w: preserve it with a branch or tag before releasing %s", ErrGuardedReleaseUnreferenced, worktreePath)
+			}
+			if _, err := git.PreserveHEAD(worktreePath, wt.LeaseID); err != nil {
+				return fmt.Errorf("preserve guarded return recovery ref: %w", err)
+			}
+
+			clearLease(wt)
+			return WriteState(poolDir, state)
+		})
+		if errors.Is(err, git.ErrHEADLocked) {
+			return fmt.Errorf("%w: %s", ErrGuardedReleaseInUse, worktreePath)
+		}
 		return err
 	})
 }

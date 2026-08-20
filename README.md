@@ -171,6 +171,7 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
 | `enter`   | `--print-path` | Print only the worktree's absolute path to stdout instead of opening a subshell (for `cd "$(treehouse enter --print-path 1)"`) |
 | `status`  | `--json` | Print worktree status and lease metadata as JSON |
 | `return`  | `--force` | Clean, reset, and return without prompting |
+| `return`  | `--guarded` | Release an exact clean, idle lease without terminating processes or resetting files |
 | `return`  | `--if-lease-id` | Return only if the current lease has the expected per-acquisition identity |
 | `return`  | `--if-lease-holder` | Return only if the current lease has the expected holder |
 | `prune`   | `--yes`   | Delete listed prune candidates instead of doing a dry run |
@@ -234,6 +235,17 @@ treehouse return --force \
 ```
 
 Treehouse compares supplied conditions while holding the pool state lock. A missing lease or mismatch exits nonzero before process termination, worktree reset, or state clearing. The same lock fences a matching return through the final clear, so the identity succeeds once and cannot release a later acquisition of the same path. `--if-lease-holder` is optional; use `--if-lease-id` for ABA protection when a holder may be reused.
+
+Automation that must never discard work or terminate a process can use guarded return:
+
+```sh
+treehouse return --guarded \
+  --if-lease-id "$lease_id" \
+  --if-lease-holder "$lease_holder" \
+  "$path"
+```
+
+`--guarded` requires `--if-lease-id` and cannot be combined with `--force`. Under the pool state lock, Treehouse verifies the exact lease and scans for unrelated processes whose working directory is inside the worktree (excluding the command and its caller ancestry). It then holds Git's per-worktree `HEAD.lock` while checking for tracked or untracked changes, verifying that `HEAD` is reachable from a local branch, remote-tracking branch, or tag, creating the recovery ref, and clearing the lease. If the worktree is busy, dirty, has an unreferenced detached commit, another Git operation owns the `HEAD` lock, or the repository uses a non-`files` ref backend such as reftable, it exits nonzero and preserves both the lease and worktree. If it is safe, Treehouse writes a lease-specific recovery ref under `refs/treehouse/guarded/` and clears the lease metadata; it does not terminate processes, detach `HEAD`, reset commits, or clean files. The create-only recovery ref fences concurrent deletion of the caller's last preservation ref and is retained so later worktree reuse cannot abandon that commit. A crash retry at the same `HEAD` is idempotent; a retry at a different `HEAD` fails closed instead of overwriting the protected commit. Put committed work on a durable branch or tag before releasing its reservation.
 
 For backward compatibility, `treehouse return <path>` without either condition keeps its original unconditional path-only behavior. Existing path-only scripts and `treehouse get --lease` stdout are unchanged.
 

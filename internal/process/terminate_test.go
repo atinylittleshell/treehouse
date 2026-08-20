@@ -54,3 +54,17 @@ func TestFilterProtectedProcesses_SkipsTerminationWhenParentLookupFails(t *testi
 		t.Fatalf("expected no processes after filtering, got %+v", filtered)
 	}
 }
+
+func TestExcludeProcessAncestry_ReturnsParentLookupFailure(t *testing.T) {
+	procs := []ProcessInfo{{PID: 200, Name: "treehouse"}}
+	want := errors.New("cannot inspect parent")
+	filtered, err := excludeProcessAncestry(procs, 200, func(int32) (int32, error) {
+		return 0, want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("excludeProcessAncestry error = %v, want %v", err, want)
+	}
+	if filtered != nil {
+		t.Fatalf("excludeProcessAncestry returned processes on error: %+v", filtered)
+	}
+}

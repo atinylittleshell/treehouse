@@ -16,6 +16,7 @@ import (
 
 var (
 	returnForce         bool
+	returnGuarded       bool
 	returnIfLeaseID     string
 	returnIfLeaseHolder string
 )
@@ -27,10 +28,16 @@ var (
 
 var returnCmd = &cobra.Command{
 	Use:   "return [path]",
-	Short: "Terminate lingering processes and return a worktree",
+	Short: "Return a worktree to its pool",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("if-lease-id") && returnIfLeaseID == "" {
 			return fmt.Errorf("--if-lease-id cannot be empty")
+		}
+		if returnGuarded && returnForce {
+			return fmt.Errorf("--guarded and --force are mutually exclusive")
+		}
+		if returnGuarded && !cmd.Flags().Changed("if-lease-id") {
+			return fmt.Errorf("--guarded requires --if-lease-id")
 		}
 
 		wtPath, err := resolveWorktreePath(args)
@@ -47,7 +54,13 @@ var returnCmd = &cobra.Command{
 		}
 
 		conditional := cmd.Flags().Changed("if-lease-id") || cmd.Flags().Changed("if-lease-holder")
-		if conditional {
+		if returnGuarded {
+			preconditions := pool.ReleasePreconditions{ExpectedLeaseID: &returnIfLeaseID}
+			if cmd.Flags().Changed("if-lease-holder") {
+				preconditions.ExpectedLeaseHolder = &returnIfLeaseHolder
+			}
+			err = pool.ReleaseGuarded(poolDir, wtPath, preconditions)
+		} else if conditional {
 			preconditions := pool.ReleasePreconditions{}
 			if cmd.Flags().Changed("if-lease-id") {
 				preconditions.ExpectedLeaseID = &returnIfLeaseID
@@ -85,6 +98,7 @@ var returnCmd = &cobra.Command{
 
 func init() {
 	returnCmd.Flags().BoolVar(&returnForce, "force", false, "Clean, reset, and return without prompting")
+	returnCmd.Flags().BoolVar(&returnGuarded, "guarded", false, "Release only when the exact lease is clean and idle; never terminate processes or reset files")
 	returnCmd.Flags().StringVar(&returnIfLeaseID, "if-lease-id", "", "Return only if the current lease has this identity")
 	returnCmd.Flags().StringVar(&returnIfLeaseHolder, "if-lease-holder", "", "Return only if the current lease has this holder")
 	rootCmd.AddCommand(returnCmd)

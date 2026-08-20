@@ -35,7 +35,24 @@ func TerminateWorktreeProcesses(worktreePath string, gracePeriod time.Duration) 
 	return procs, nil
 }
 
+// ExcludeCurrentProcessAncestry removes the running Treehouse command and its
+// ancestors from a process scan. A caller's shell may legitimately have its
+// cwd in the worktree while invoking a lifecycle command; unrelated processes
+// remain in the result. Parent lookup errors are returned so safety checks can
+// fail closed.
+func ExcludeCurrentProcessAncestry(procs []ProcessInfo) ([]ProcessInfo, error) {
+	return excludeProcessAncestry(procs, int32(os.Getpid()), parentPID)
+}
+
 func filterProtectedProcesses(procs []ProcessInfo, currentPID int32, lookupParent func(int32) (int32, error)) []ProcessInfo {
+	filtered, err := excludeProcessAncestry(procs, currentPID, lookupParent)
+	if err != nil {
+		return nil
+	}
+	return filtered
+}
+
+func excludeProcessAncestry(procs []ProcessInfo, currentPID int32, lookupParent func(int32) (int32, error)) ([]ProcessInfo, error) {
 	protected := map[int32]struct{}{
 		currentPID: {},
 	}
@@ -43,7 +60,7 @@ func filterProtectedProcesses(procs []ProcessInfo, currentPID int32, lookupParen
 	for pid := currentPID; pid > 0; {
 		parent, err := lookupParent(pid)
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		if parent <= 0 {
 			break
@@ -62,7 +79,7 @@ func filterProtectedProcesses(procs []ProcessInfo, currentPID int32, lookupParen
 		}
 		filtered = append(filtered, proc)
 	}
-	return filtered
+	return filtered, nil
 }
 
 func parentPID(pid int32) (int32, error) {
