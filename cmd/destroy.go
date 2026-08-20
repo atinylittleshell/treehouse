@@ -166,7 +166,7 @@ func resolveDestroyPoolFromTarget(targetPath string) (string, error) {
 
 	repoRoot, err := vcs.FindMainRepoRootFrom(abs)
 	if err != nil {
-		return "", fmt.Errorf("cannot resolve a treehouse pool from %s: not a pool directory or git repository", targetPath)
+		return "", fmt.Errorf("cannot resolve a treehouse pool from %s: not a pool directory or git/jj repository", targetPath)
 	}
 	cfg, err := config.Load(repoRoot)
 	if err != nil {
