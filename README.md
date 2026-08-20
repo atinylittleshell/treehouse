@@ -335,6 +335,7 @@ If no config is found, the default pool size is 16.
 ### Version-control backend (git or Jujutsu)
 
 Treehouse works in git and [Jujutsu (jj)](https://github.com/jj-vcs/jj) repositories.
+**The jj backend is experimental**: it is newer than the git backend and has seen far less production use, so treat it accordingly and report issues.
 In a jj repository, pooled worktrees are [jj workspaces](https://jj-vcs.github.io/jj/latest/working-copy/#workspaces) instead of git worktrees; the pool, lease, and safety machinery is identical.
 
 Git is the default backend everywhere, including in colocated repositories (both `.jj` and `.git`) and `.jj`-only repositories.
