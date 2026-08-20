@@ -326,6 +326,11 @@ max_trees = 16
 # Use "." to keep the pool inside the project (see "In-project storage" below).
 # Use an absolute user-level root for treehouse prune --all.
 # root = "$HOME/worktrees"
+
+# Optional version-control backend. Git is the default everywhere; set "jj"
+# to opt in to the experimental Jujutsu backend
+# (see "Version-control backend" below).
+# vcs = "jj"
 ```
 
 The repo-level config takes precedence for repo-safe settings.
