@@ -1,6 +1,7 @@
 package process
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -21,7 +22,10 @@ func TerminateWorktreeProcesses(worktreePath string, gracePeriod time.Duration) 
 	if err != nil {
 		return nil, err
 	}
-	procs = filterProtectedProcesses(procs, int32(os.Getpid()), parentPID)
+	procs, err = filterProtectedProcesses(procs, int32(os.Getpid()), parentPID)
+	if err != nil {
+		return nil, err
+	}
 	if len(procs) == 0 {
 		return nil, nil
 	}
@@ -35,7 +39,28 @@ func TerminateWorktreeProcesses(worktreePath string, gracePeriod time.Duration) 
 	return procs, nil
 }
 
-func filterProtectedProcesses(procs []ProcessInfo, currentPID int32, lookupParent func(int32) (int32, error)) []ProcessInfo {
+// UnprotectedProcessesInWorktree returns processes whose cwd is within the
+// worktree, excluding the caller and its ancestors. These are exactly the
+// processes TerminateWorktreeProcesses would target, so a non-empty result
+// after termination means a foreign live writer remains inside the worktree.
+// Callers re-scan with it before resetting a slot so a process that started
+// during the grace period, or one an ancestry-lookup failure spared, is not
+// mistaken for a quiet worktree.
+func UnprotectedProcessesInWorktree(worktreePath string) ([]ProcessInfo, error) {
+	procs, err := FindProcessesInWorktree(worktreePath)
+	if err != nil {
+		return nil, err
+	}
+	return filterProtectedProcesses(procs, int32(os.Getpid()), parentPID)
+}
+
+// filterProtectedProcesses drops the caller and its ancestors from procs so
+// termination never signals the process running return or its parents. A
+// failure walking the ancestry is returned as an error rather than swallowed:
+// silently protecting every process would let the caller mistake "the filter
+// gave up" for "nothing needed killing" and reset the worktree with live
+// writers still inside it.
+func filterProtectedProcesses(procs []ProcessInfo, currentPID int32, lookupParent func(int32) (int32, error)) ([]ProcessInfo, error) {
 	protected := map[int32]struct{}{
 		currentPID: {},
 	}
@@ -43,7 +68,7 @@ func filterProtectedProcesses(procs []ProcessInfo, currentPID int32, lookupParen
 	for pid := currentPID; pid > 0; {
 		parent, err := lookupParent(pid)
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("cannot resolve ancestry of process %d: %w", pid, err)
 		}
 		if parent <= 0 {
 			break
@@ -62,7 +87,7 @@ func filterProtectedProcesses(procs []ProcessInfo, currentPID int32, lookupParen
 		}
 		filtered = append(filtered, proc)
 	}
-	return filtered
+	return filtered, nil
 }
 
 func parentPID(pid int32) (int32, error) {

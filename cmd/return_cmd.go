@@ -117,8 +117,7 @@ func finalizeWorktreeReturn(wtPath string) error {
 		}
 	}
 
-	killLingeringProcesses(wtPath)
-	return nil
+	return killLingeringProcesses(wtPath)
 }
 
 func resolveWorktreePath(args []string) (string, error) {

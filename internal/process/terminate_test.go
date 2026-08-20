@@ -12,7 +12,7 @@ func TestFilterProtectedProcesses_SkipsCurrentProcessAndAncestors(t *testing.T) 
 		{PID: 300, Name: "server"},
 	}
 
-	filtered := filterProtectedProcesses(procs, 200, func(pid int32) (int32, error) {
+	filtered, err := filterProtectedProcesses(procs, 200, func(pid int32) (int32, error) {
 		switch pid {
 		case 200:
 			return 100, nil
@@ -24,6 +24,9 @@ func TestFilterProtectedProcesses_SkipsCurrentProcessAndAncestors(t *testing.T) 
 			return 0, errors.New("unknown pid")
 		}
 	})
+	if err != nil {
+		t.Fatalf("filterProtectedProcesses: %v", err)
+	}
 
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 process after filtering, got %d", len(filtered))
@@ -36,21 +39,25 @@ func TestFilterProtectedProcesses_SkipsCurrentProcessAndAncestors(t *testing.T) 
 	}
 }
 
-func TestFilterProtectedProcesses_SkipsTerminationWhenParentLookupFails(t *testing.T) {
+func TestFilterProtectedProcesses_ReturnsErrorWhenParentLookupFails(t *testing.T) {
 	procs := []ProcessInfo{
 		{PID: 100, Name: "shell"},
 		{PID: 200, Name: "treehouse"},
 		{PID: 300, Name: "server"},
 	}
 
-	filtered := filterProtectedProcesses(procs, 200, func(pid int32) (int32, error) {
+	// A parent-lookup failure must surface as an error, not silently protect
+	// every process and report "nothing to kill".
+	filtered, err := filterProtectedProcesses(procs, 200, func(pid int32) (int32, error) {
 		if pid == 200 {
 			return 0, errors.New("cannot inspect parent")
 		}
 		return 0, nil
 	})
-
-	if len(filtered) != 0 {
-		t.Fatalf("expected no processes after filtering, got %+v", filtered)
+	if err == nil {
+		t.Fatalf("expected an error when parent lookup fails, got filtered=%+v", filtered)
+	}
+	if filtered != nil {
+		t.Fatalf("expected no filtered processes on error, got %+v", filtered)
 	}
 }

@@ -25,6 +25,12 @@ var (
 	getNoFetch     bool
 )
 
+// Process seams, overridable in tests, matching the pattern in internal/pool.
+var (
+	terminateWorktreeProcesses     = process.TerminateWorktreeProcesses
+	unprotectedProcessesInWorktree = process.UnprotectedProcessesInWorktree
+)
+
 var getCmd = &cobra.Command{
 	Use:   "get",
 	Short: "Acquire a worktree from the pool and open a subshell",
@@ -109,7 +115,10 @@ func getRunE(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	killLingeringProcesses(wtPath)
+	if err := killLingeringProcesses(wtPath); err != nil {
+		fmt.Fprintf(os.Stderr, "🌳 Warning: %v; leaving worktree in place.\n", err)
+		return nil
+	}
 
 	if err := pool.Release(poolDir, wtPath); err != nil {
 		fmt.Fprintf(os.Stderr, "🌳 Warning: failed to clean worktree: %v\n", err)
@@ -147,20 +156,40 @@ func getLeaseRunE(repoRoot, poolDir string, cfg config.Config) error {
 }
 
 // killLingeringProcesses terminates any process whose cwd is within the given
-// worktree. Called before returning a worktree to the pool so detached tools
-// (e.g. opencode servers that ignore SIGHUP) don't keep holding the worktree.
-func killLingeringProcesses(wtPath string) {
-	killed, err := process.TerminateWorktreeProcesses(wtPath, 2*time.Second)
+// worktree, then verifies the worktree is clear before it is handed back to the
+// pool. Detached tools (e.g. opencode servers that ignore SIGHUP) are the usual
+// reason a worktree is not quiet on return.
+//
+// It returns an error when termination cannot be proven complete: a process
+// could not be signalled (e.g. an ancestry-lookup failure), or a live writer
+// remains after termination. The point-in-time selection inside
+// TerminateWorktreeProcesses signals only what a single scan saw, so a process
+// that started during the grace period is never targeted; the re-scan below
+// catches it. Failing here makes the caller leave the slot in place rather than
+// reset a worktree another process is still writing into.
+func killLingeringProcesses(wtPath string) error {
+	killed, err := terminateWorktreeProcesses(wtPath, 2*time.Second)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "🌳 Warning: failed to scan for lingering processes: %v\n", err)
-		return
+		return fmt.Errorf("could not terminate worktree processes: %w", err)
 	}
-	if len(killed) == 0 {
-		return
+	if len(killed) > 0 {
+		names := make([]string, len(killed))
+		for i, p := range killed {
+			names[i] = p.String()
+		}
+		fmt.Fprintf(os.Stderr, "🌳 Terminated lingering processes: %s\n", strings.Join(names, ", "))
 	}
-	names := make([]string, len(killed))
-	for i, p := range killed {
-		names[i] = p.String()
+
+	survivors, err := unprotectedProcessesInWorktree(wtPath)
+	if err != nil {
+		return fmt.Errorf("could not verify worktree processes stopped: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "🌳 Terminated lingering processes: %s\n", strings.Join(names, ", "))
+	if len(survivors) > 0 {
+		names := make([]string, len(survivors))
+		for i, p := range survivors {
+			names[i] = p.String()
+		}
+		return fmt.Errorf("worktree still has live processes after termination: %s", strings.Join(names, ", "))
+	}
+	return nil
 }

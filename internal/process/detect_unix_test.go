@@ -51,6 +51,59 @@ func TestFindProcessesInWorktree_ResolvesSymlinks(t *testing.T) {
 	}
 }
 
+// UnprotectedProcessesInWorktree must report a foreign process in the worktree
+// while excluding the caller, so a return run from inside its own worktree is
+// not blocked by itself yet still refuses when another writer is present.
+func TestUnprotectedProcessesInWorktree_ExcludesCallerIncludesForeign(t *testing.T) {
+	worktreeDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("sleep", "60")
+	cmd.Dir = worktreeDir
+	if err := cmd.Start(); err != nil {
+		t.Skipf("cannot start sleep: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Stand the caller inside the worktree so the exclusion is exercised.
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(worktreeDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+
+	procs, err := UnprotectedProcessesInWorktree(worktreeDir)
+	if err != nil {
+		t.Fatalf("UnprotectedProcessesInWorktree: %v", err)
+	}
+
+	var foundForeign, foundCaller bool
+	for _, p := range procs {
+		if int(p.PID) == cmd.Process.Pid {
+			foundForeign = true
+		}
+		if int(p.PID) == os.Getpid() {
+			foundCaller = true
+		}
+	}
+	if !foundForeign {
+		t.Fatalf("expected foreign process %d reported, got %v", cmd.Process.Pid, procs)
+	}
+	if foundCaller {
+		t.Fatalf("expected the caller %d excluded, got %v", os.Getpid(), procs)
+	}
+}
+
 func TestFindProcessesInWorktree_IncludesDotDotPrefixedChild(t *testing.T) {
 	worktreeDir := t.TempDir()
 	childDir := filepath.Join(worktreeDir, "..cache")
