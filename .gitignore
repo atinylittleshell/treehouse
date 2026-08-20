@@ -19,4 +19,4 @@ coverage.out
 .no-mistakes/evidence/
 
 # Local agent session logs (written by Claude Code hooks)
-logs/
+/logs/

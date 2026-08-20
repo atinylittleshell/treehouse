@@ -343,10 +343,11 @@ Opt in to the jj backend with `vcs = "jj"`, resolved in this precedence (highest
 The jj opt-in only applies where a `.jj` directory actually exists; in a plain git repository it is silently ignored and git is used, so a shell-wide `TREEHOUSE_VCS=jj` never breaks git-only repositories.
 Pooled jj workspaces inherit the opt-in from their main repository root, so an untracked `treehouse.toml` there is enough.
 
-The backend is resolved on every command, and existing pool slots keep the flavor they were created with: changing the opt-in does not convert worktrees already in the pool, and slots of the other flavor are skipped or fail safe rather than being converted.
-Removal is the exception: `destroy` and `prune` remove each slot with the backend matching what the slot actually is (its own `.git` or `.jj` marker), so a git worktree is still cleanly deregistered from git even after opting the repository into jj, and vice versa.
+The backend is resolved on every command, and existing pool slots keep the flavor they were created with: changing the opt-in does not convert worktrees already in the pool.
+`destroy` and `prune` handle each slot by its own flavor (its `.git` or `.jj` marker), so a git worktree is still cleanly deregistered from git even after opting the repository into jj, and vice versa.
+`treehouse get`, however, is not yet flavor-aware: it may reset and hand back an existing slot of the old flavor until the pool is migrated, so a repo freshly opted into jj can still serve git worktrees from its old pool.
 To migrate a pool after changing the opt-in, `treehouse destroy` the old slots and re-acquire them with `treehouse get`.
-Managing mixed git+jj pools first-class is deferred to a follow-up.
+Acquire-side flavor awareness and first-class mixed git+jj pools are deferred to a follow-up.
 
 jj-backend notes:
 
@@ -355,6 +356,7 @@ jj-backend notes:
 - Resets abandon only the working-copy commit and are recoverable with `jj op restore`.
 - Merge detection uses ancestry; squash-merged work is treated as unmerged, so lifecycle commands err on the side of keeping it.
 - The default branch resolves to the `main`/`master`/`trunk` bookmark, preferring origin.
+- Known limitation: a pooled jj workspace whose backing repository was deleted is not classified as an orphan; it is skipped as unverified and never auto-reclaimed by `prune --prune-orphans`. Reclaim it with `treehouse destroy`.
 
 ### Worktree root
 
