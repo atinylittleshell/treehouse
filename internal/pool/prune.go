@@ -508,7 +508,7 @@ func executePrune(poolDir string, plan prunePlan, options PruneOptions) (PruneRe
 			} else {
 				if err := vcs.RemoveCleanWorktree(context.RepoRoot, worktree.Path); err != nil {
 					clearReservation(&state.Worktrees[idx])
-					result.Skipped = append(result.Skipped, newPruneSkipped(worktree.Name, worktree.Path, pruneSkipRemoveFailed, "git refused to remove worktree", err.Error()))
+					result.Skipped = append(result.Skipped, newPruneSkipped(worktree.Name, worktree.Path, pruneSkipRemoveFailed, "VCS refused to remove worktree", err.Error()))
 					continue
 				}
 				container, err := removableWorktreeContainer(worktree.Path)

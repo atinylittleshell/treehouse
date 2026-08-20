@@ -387,3 +387,18 @@ func TestRemoveWorktreeRefusesNonJJDirectory(t *testing.T) {
 		t.Fatalf("directory contents must survive a refused removal: %v", err)
 	}
 }
+
+// TestRemoveWorktreeRefusesMainWorkspace pins the other side of the deletion
+// guard: the main workspace, whose .jj/repo is the repository store itself,
+// must never be deleted as if it were a pooled secondary workspace.
+func TestRemoveWorktreeRefusesMainWorkspace(t *testing.T) {
+	requireJJ(t)
+	repoDir := newLocalRepo(t)
+	b := &Backend{}
+	if err := b.RemoveWorktree(repoDir, repoDir); err == nil {
+		t.Fatal("expected an error removing the main workspace")
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, "README.md")); err != nil {
+		t.Fatalf("repository contents must survive a refused removal: %v", err)
+	}
+}

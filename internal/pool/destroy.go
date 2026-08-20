@@ -526,7 +526,7 @@ func removeManagedWorktree(repoRoot, path string) error {
 			removeRepoRoot = resolvedRoot
 		}
 		if err := vcs.RemoveWorktree(removeRepoRoot, path); err != nil {
-			return fmt.Errorf("git refused to remove worktree: %w", err)
+			return fmt.Errorf("VCS refused to remove worktree: %w", err)
 		}
 	}
 	container, err := removableWorktreeContainer(path)

@@ -281,6 +281,7 @@ func TestRemoveWorktreeDispatchesOnSlotFlavorGitUnderJJOptIn(t *testing.T) {
 	if _, err := exec.LookPath("jj"); err != nil {
 		t.Skip("jj is not installed")
 	}
+	isolateUserConfig(t)
 	isolateJJConfig(t)
 	base := t.TempDir()
 	repoDir := filepath.Join(base, "repo")
@@ -314,6 +315,7 @@ func TestRemoveWorktreeDispatchesOnSlotFlavorJJWithoutOptIn(t *testing.T) {
 	if _, err := exec.LookPath("jj"); err != nil {
 		t.Skip("jj is not installed")
 	}
+	isolateUserConfig(t)
 	isolateJJConfig(t)
 	base := t.TempDir()
 	repoDir := filepath.Join(base, "repo")
