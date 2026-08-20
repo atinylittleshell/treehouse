@@ -11,11 +11,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kunchenguid/treehouse/internal/config"
-	"github.com/kunchenguid/treehouse/internal/git"
 	"github.com/kunchenguid/treehouse/internal/pool"
 	"github.com/kunchenguid/treehouse/internal/process"
 	"github.com/kunchenguid/treehouse/internal/shell"
 	"github.com/kunchenguid/treehouse/internal/ui"
+	"github.com/kunchenguid/treehouse/internal/vcs"
 )
 
 var (
@@ -52,11 +52,11 @@ func getRunE(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--json requires --lease")
 	}
 
-	repoRoot, err := git.FindRepoRoot()
+	repoRoot, err := vcs.FindRepoRoot()
 	if err != nil {
 		return fmt.Errorf("not in a git repository: %w", err)
 	}
-	repoRoot, err = git.FindMainRepoRoot()
+	repoRoot, err = vcs.FindMainRepoRoot()
 	if err != nil {
 		return fmt.Errorf("not in a git repository: %w", err)
 	}
@@ -94,11 +94,11 @@ func getRunE(cmd *cobra.Command, args []string) error {
 	_, err = shell.Spawn(wtPath, env)
 
 	// Subshell exited — handle return
-	if err := git.DetachWorktree(wtPath); err != nil {
+	if err := vcs.DetachWorktree(wtPath); err != nil {
 		fmt.Fprintf(os.Stderr, "🌳 Warning: failed to detach worktree HEAD: %v\n", err)
 	}
 
-	dirty, _ := git.IsDirty(wtPath)
+	dirty, _ := vcs.IsDirty(wtPath)
 	if dirty {
 		fmt.Fprintf(os.Stderr, "🌳 Worktree has uncommitted changes.\n")
 

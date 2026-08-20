@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/kunchenguid/treehouse/internal/git"
+	"github.com/kunchenguid/treehouse/internal/vcs"
 )
 
 // EnsureExcluded arranges for treehouseDir to be ignored by the enclosing git
@@ -33,7 +33,7 @@ func EnsureExcluded(treehouseDir string) error {
 		checkDir = parent
 	}
 
-	repoRoot, err := git.FindRepoRootFrom(checkDir)
+	repoRoot, err := vcs.FindRepoRootFrom(checkDir)
 	if err != nil {
 		// Not inside a git repo — nothing to do (e.g. the global ~/.treehouse root).
 		return nil
@@ -58,7 +58,7 @@ func EnsureExcluded(treehouseDir string) error {
 		return nil
 	}
 
-	commonDir, err := git.CommonGitDir(repoRoot)
+	commonDir, err := vcs.CommonGitDir(repoRoot)
 	if err != nil {
 		return err
 	}

@@ -1,8 +1,7 @@
-package git
+package gitvcs
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -400,11 +399,6 @@ func IsDirty(worktreePath string) (bool, error) {
 	return out != "", nil
 }
 
-func ShortHash(s string) string {
-	h := sha256.Sum256([]byte(s))
-	return fmt.Sprintf("%x", h[:3])
-}
-
 func runGit(dir string, args ...string) (string, error) {
 	out, err := runGitRaw(dir, args...)
 	if err != nil {
@@ -427,3 +421,44 @@ func runGitRaw(dir string, args ...string) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// Backend adapts this package's functions to the vcs.Backend interface. All
+// methods delegate to the package-level implementations so behavior is
+// identical whether callers use the interface or the functions directly.
+type Backend struct{}
+
+// New returns the git backend.
+func New() *Backend { return &Backend{} }
+
+func (*Backend) Name() string { return "git" }
+
+func (*Backend) FindRepoRootFrom(dir string) (string, error)     { return FindRepoRootFrom(dir) }
+func (*Backend) FindMainRepoRootFrom(dir string) (string, error) { return FindMainRepoRootFrom(dir) }
+func (*Backend) GetDefaultBranch(repoRoot string) (string, error) {
+	return GetDefaultBranch(repoRoot)
+}
+func (*Backend) CommonGitDir(dir string) (string, error)      { return CommonGitDir(dir) }
+func (*Backend) HasRemote(repoRoot, name string) bool         { return HasRemote(repoRoot, name) }
+func (*Backend) GetRemoteURL(repoRoot string) (string, error) { return GetRemoteURL(repoRoot) }
+func (*Backend) AddWorktree(repoRoot, path, branch string) error {
+	return AddWorktree(repoRoot, path, branch)
+}
+func (*Backend) PruneWorktrees(repoRoot string) error { return PruneWorktrees(repoRoot) }
+func (*Backend) RemoveWorktree(repoRoot, path string) error {
+	return RemoveWorktree(repoRoot, path)
+}
+func (*Backend) RemoveCleanWorktree(repoRoot, path string) error {
+	return RemoveCleanWorktree(repoRoot, path)
+}
+func (*Backend) Fetch(repoRoot string) error { return Fetch(repoRoot) }
+func (*Backend) ResetWorktree(worktreePath, branch string) error {
+	return ResetWorktree(worktreePath, branch)
+}
+func (*Backend) DetachWorktree(worktreePath string) error { return DetachWorktree(worktreePath) }
+func (*Backend) DefaultBranchMergeRef(repoRoot string) (string, error) {
+	return DefaultBranchMergeRef(repoRoot)
+}
+func (*Backend) IsHeadMergedIntoRef(worktreePath, ref string) (bool, error) {
+	return IsHeadMergedIntoRef(worktreePath, ref)
+}
+func (*Backend) IsDirty(worktreePath string) (bool, error) { return IsDirty(worktreePath) }

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
-	"github.com/kunchenguid/treehouse/internal/git"
+	"github.com/kunchenguid/treehouse/internal/vcs"
 )
 
 type Config struct {
@@ -109,13 +109,13 @@ func loadUser() (Config, bool, error) {
 func ResolvePoolDir(repoRoot string, root string) (string, error) {
 	// Use remote URL for the hash when available; fall back to the
 	// absolute repo path for purely-local repositories.
-	hashInput, err := git.GetRemoteURL(repoRoot)
+	hashInput, err := vcs.GetRemoteURL(repoRoot)
 	if err != nil {
 		hashInput = repoRoot
 	}
 
 	repoName := filepath.Base(repoRoot)
-	shortHash := git.ShortHash(hashInput)
+	shortHash := vcs.ShortHash(hashInput)
 	poolName := repoName + "-" + shortHash
 
 	poolRoot, err := ResolvePoolRoot(repoRoot, root)
