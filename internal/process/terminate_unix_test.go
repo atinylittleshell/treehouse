@@ -90,6 +90,49 @@ func TestTerminateWorktreeProcesses_EscalatesToKill(t *testing.T) {
 	}
 }
 
+func TestTerminate_WaitsForSIGKILLedProcessToBeReaped(t *testing.T) {
+	origKill, origAlive, origInterval := killProcess, isAlive, reapPollInterval
+	t.Cleanup(func() {
+		killProcess, isAlive, reapPollInterval = origKill, origAlive, origInterval
+	})
+	reapPollInterval = time.Millisecond
+
+	var sigkilled bool
+	var pollsAfterKill int
+	var lastAlive bool
+	killProcess = func(_ int32, sig syscall.Signal) {
+		if sig == syscall.SIGKILL {
+			sigkilled = true
+		}
+	}
+	// Stay alive through the SIGTERM grace period to force an escalation to
+	// SIGKILL, then linger for two more polls - a killed process not yet reaped -
+	// before the OS reclaims it.
+	isAlive = func(int32) bool {
+		if !sigkilled {
+			lastAlive = true
+			return true
+		}
+		pollsAfterKill++
+		lastAlive = pollsAfterKill <= 2
+		return lastAlive
+	}
+
+	terminate([]int32{424242}, 50*time.Millisecond)
+
+	if !sigkilled {
+		t.Fatal("expected terminate to escalate to SIGKILL")
+	}
+	if pollsAfterKill == 0 {
+		t.Fatal("terminate did not poll for exit after SIGKILL")
+	}
+	// Pre-fix terminate returned as soon as it sent SIGKILL, while the process
+	// was still alive; the reap wait must not return until it is gone.
+	if lastAlive {
+		t.Fatal("terminate returned while the SIGKILLed process was still alive")
+	}
+}
+
 func TestTerminateWorktreeProcesses_AlreadyDeadPIDIsNoop(t *testing.T) {
 	// Kill our own fake PID that won't exist; Terminate should not error.
 	// We simulate by starting a process, killing it, then calling Terminate
