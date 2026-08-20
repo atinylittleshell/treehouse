@@ -10,8 +10,9 @@ import (
 // TerminateWorktreeProcesses finds every process whose cwd is within the given
 // worktree path and terminates them.
 //
-// On unix it sends SIGTERM, waits up to gracePeriod for processes to exit,
-// then SIGKILLs any survivors. On windows it uses TerminateProcess.
+// On unix it sends SIGTERM and waits up to gracePeriod for processes to exit.
+// It then sends SIGKILL to any survivors and waits up to gracePeriod again for
+// them to exit. On windows it uses TerminateProcess.
 //
 // Returns the list of processes that were targeted. Errors only if the initial
 // scan fails; individual kill failures (e.g. process already gone) are
