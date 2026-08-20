@@ -115,18 +115,24 @@ func getRunE(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := killLingeringProcesses(wtPath); err != nil {
+	if err := returnWorktreeToPool(poolDir, wtPath); err != nil {
 		fmt.Fprintf(os.Stderr, "🌳 Warning: %v; leaving worktree in place.\n", err)
-		return nil
+		return err
 	}
-
-	if err := pool.Release(poolDir, wtPath); err != nil {
-		fmt.Fprintf(os.Stderr, "🌳 Warning: failed to clean worktree: %v\n", err)
-	} else {
-		fmt.Fprintln(os.Stderr, "🌳 Worktree returned to pool.")
-	}
+	fmt.Fprintln(os.Stderr, "🌳 Worktree returned to pool.")
 
 	return nil
+}
+
+// returnWorktreeToPool terminates any lingering writers and resets the worktree
+// back into the pool as a single locked transaction: killLingeringProcesses runs
+// as the release's beforeReset step, under the same state lock and immediately
+// before the reset, so a writer that re-enters the worktree cannot slip between
+// the emptiness check and the destructive reset.
+func returnWorktreeToPool(poolDir, wtPath string) error {
+	return pool.ReleaseConditional(poolDir, wtPath, pool.ReleasePreconditions{}, func() error {
+		return killLingeringProcesses(wtPath)
+	})
 }
 
 // getLeaseRunE performs a non-interactive, durable acquire. It writes either the

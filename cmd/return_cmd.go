@@ -65,9 +65,11 @@ var returnCmd = &cobra.Command{
 				})
 			}
 		} else {
-			err = prepareWorktreeReturn(wtPath)
+			err = confirmWorktreeReturn(wtPath)
 			if err == nil {
-				err = pool.Release(poolDir, wtPath)
+				err = pool.ReleaseConditional(poolDir, wtPath, pool.ReleasePreconditions{}, func() error {
+					return finalizeWorktreeReturn(wtPath)
+				})
 			}
 		}
 		if errors.Is(err, errReturnAborted) {
@@ -88,13 +90,6 @@ func init() {
 	returnCmd.Flags().StringVar(&returnIfLeaseID, "if-lease-id", "", "Return only if the current lease has this identity")
 	returnCmd.Flags().StringVar(&returnIfLeaseHolder, "if-lease-holder", "", "Return only if the current lease has this holder")
 	rootCmd.AddCommand(returnCmd)
-}
-
-func prepareWorktreeReturn(wtPath string) error {
-	if err := confirmWorktreeReturn(wtPath); err != nil {
-		return err
-	}
-	return finalizeWorktreeReturn(wtPath)
 }
 
 func confirmWorktreeReturn(wtPath string) error {
