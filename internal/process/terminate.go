@@ -1,6 +1,7 @@
 package process
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -59,7 +60,10 @@ func UnprotectedProcessesInWorktree(worktreePath string) ([]ProcessInfo, error) 
 // failure walking the ancestry is returned as an error rather than swallowed:
 // silently protecting every process would let the caller mistake "the filter
 // gave up" for "nothing needed killing" and reset the worktree with live
-// writers still inside it.
+// writers still inside it. The one benign exception is an ancestor that has
+// already exited: it ends the walk (everything below it is protected and its
+// own ancestors are gone), which is common on Windows where a parent can exit
+// and leave a dangling parent PID.
 func filterProtectedProcesses(procs []ProcessInfo, currentPID int32, lookupParent func(int32) (int32, error)) ([]ProcessInfo, error) {
 	protected := map[int32]struct{}{
 		currentPID: {},
@@ -68,6 +72,9 @@ func filterProtectedProcesses(procs []ProcessInfo, currentPID int32, lookupParen
 	for pid := currentPID; pid > 0; {
 		parent, err := lookupParent(pid)
 		if err != nil {
+			if errors.Is(err, gopsutilprocess.ErrorProcessNotRunning) {
+				break
+			}
 			return nil, fmt.Errorf("cannot resolve ancestry of process %d: %w", pid, err)
 		}
 		if parent <= 0 {
