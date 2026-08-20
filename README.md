@@ -125,8 +125,10 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
            │
            ▼
   Terminate lingering worktree
-  processes, reset worktree,
-  & return to pool
+  processes and verify none remain
+           │
+           ▼
+  Reset worktree & return to pool
   (ready for next agent)
 ```
 
@@ -153,7 +155,7 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
 | `treehouse get --lease`    | Durably lease a worktree without a subshell; print its path |
 | `treehouse enter <name>`   | Open a subshell in an existing worktree by name (the number from `status`), even if it is in use; pool state is left untouched |
 | `treehouse status`         | Show pool status (highlights leased and current worktrees) |
-| `treehouse return [path]`  | Release any lease, terminate lingering worktree processes, and return it to the pool |
+| `treehouse return [path]`  | Release any lease and return a worktree only after verifying foreign processes stopped |
 | `treehouse prune`          | Dry-run removal of stale idle worktrees in the current repo pool |
 | `treehouse prune --all`    | Dry-run removal of stale idle worktrees across every managed pool |
 | `treehouse destroy <path>` | Dry-run removal of one worktree (safe by default; `--yes` to execute) |
@@ -221,7 +223,8 @@ With `--no-fetch`, Treehouse resets or creates the worktree from existing local 
 
 `treehouse status --json` returns an array with `name`, `path`, `status`, `lease_id`, `lease_holder`, `leased_at`, and `processes`. Non-leased entries use empty lease strings and a `null` timestamp. State files written before lease identities remain readable; their existing leases have an empty `lease_id` until released and acquired again.
 
-Release a lease with `treehouse return <path>`, which clears the lease, terminates any lingering processes, resets the worktree, and returns it to the pool.
+Release a lease with `treehouse return <path>`, which terminates lingering processes and verifies that no foreign process remains before it resets the worktree, clears the lease, and returns the worktree to the pool.
+If process termination or that verification fails, the command exits nonzero and leaves the worktree and lease in place instead of recycling a slot that may still be in use.
 When you pass an explicit path, `treehouse return` can run from outside the repository because it resolves the managed pool from that worktree path.
 
 For retry-safe automation, condition the return on the identity from allocation or status:

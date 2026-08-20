@@ -14,9 +14,9 @@ import (
 // On unix it sends SIGTERM, waits up to gracePeriod for processes to exit,
 // then SIGKILLs any survivors. On windows it uses TerminateProcess.
 //
-// Returns the list of processes that were targeted. Errors only if the initial
-// scan fails; individual kill failures (e.g. process already gone) are
-// swallowed.
+// Returns the list of processes that were targeted. It returns an error when
+// process discovery or caller ancestry lookup fails. Individual kill failures
+// (e.g. a process already gone) are swallowed.
 func TerminateWorktreeProcesses(worktreePath string, gracePeriod time.Duration) ([]ProcessInfo, error) {
 	procs, err := FindProcessesInWorktree(worktreePath)
 	if err != nil {
