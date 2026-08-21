@@ -66,14 +66,16 @@ type Backend interface {
 	// discarding local modifications.
 	ResetWorktree(worktreePath, branch string) error
 	// ResetWorktreeToRef resets worktreePath to an already resolved commit.
-	// Callers that verified safety must pass the commit returned by
-	// IsWorktreeSafeToReset so verification and reset share one target.
-	ResetWorktreeToRef(worktreePath, ref string) error
+	// Callers that verified safety must pass the reset target and worktree
+	// HEAD returned by IsWorktreeSafeToReset. The reset re-reads HEAD and
+	// refuses if it changed, so concurrent committed work is not discarded.
+	ResetWorktreeToRef(worktreePath, ref, expectedHead string) error
 	// IsWorktreeSafeToReset reports whether worktreePath can be reset to
-	// branch without discarding committed work and returns the immutable
-	// commit it checked. Callers must pass that commit to ResetWorktreeToRef.
-	// The check fails closed when the target cannot be resolved.
-	IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, error)
+	// branch without discarding committed work. It returns the immutable
+	// reset target and the worktree HEAD recorded at check time. Callers
+	// must pass both to ResetWorktreeToRef. The check fails closed when
+	// the target or HEAD cannot be resolved.
+	IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, string, error)
 	// DetachWorktree releases any branch the worktree has checked out so
 	// pooled worktrees never hold branch names.
 	DetachWorktree(worktreePath string) error
@@ -281,13 +283,14 @@ func ResetWorktree(worktreePath, branch string) error {
 }
 
 // ResetWorktreeToRef resets worktreePath to an already resolved commit.
-func ResetWorktreeToRef(worktreePath, ref string) error {
-	return backendFor(worktreePath).ResetWorktreeToRef(worktreePath, ref)
+func ResetWorktreeToRef(worktreePath, ref, expectedHead string) error {
+	return backendFor(worktreePath).ResetWorktreeToRef(worktreePath, ref, expectedHead)
 }
 
 // IsWorktreeSafeToReset reports whether worktreePath can be reset to branch
-// without discarding committed work and returns the immutable commit it checked.
-func IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, error) {
+// without discarding committed work and returns the immutable reset target and
+// the worktree HEAD recorded at check time.
+func IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, string, error) {
 	return backendFor(worktreePath).IsWorktreeSafeToReset(worktreePath, branch)
 }
 

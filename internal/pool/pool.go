@@ -153,12 +153,13 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			if err != nil || dirty {
 				continue
 			}
-			safe, resetRef, err := vcs.IsWorktreeSafeToReset(wt.Path, branch)
+			safe, resetRef, head, err := vcs.IsWorktreeSafeToReset(wt.Path, branch)
 			if err != nil || !safe {
 				continue
 			}
-			// Found an available one. Reset it to the verified commit.
-			if err := vcs.ResetWorktreeToRef(wt.Path, resetRef); err != nil {
+			// Found an available one. Reset it to the verified commit only if
+			// HEAD is still the one whose ancestry was checked.
+			if err := vcs.ResetWorktreeToRef(wt.Path, resetRef, head); err != nil {
 				continue
 			}
 			if err := markAcquired(&state.Worktrees[i], opts); err != nil {

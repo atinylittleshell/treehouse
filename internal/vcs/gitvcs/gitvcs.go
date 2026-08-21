@@ -202,18 +202,31 @@ func ResetWorktree(worktreePath, branch string) error {
 	if err != nil {
 		return err
 	}
-	return ResetWorktreeToRef(worktreePath, ref)
+	head, err := worktreeHead(worktreePath)
+	if err != nil {
+		return err
+	}
+	return ResetWorktreeToRef(worktreePath, ref, head)
 }
 
 // ResetWorktreeToRef resets worktreePath to an already resolved commit.
-func ResetWorktreeToRef(worktreePath, ref string) error {
+// expectedHead is the worktree HEAD recorded at check time; if HEAD has
+// changed, the reset is refused so concurrent committed work is not discarded.
+func ResetWorktreeToRef(worktreePath, ref, expectedHead string) error {
+	head, err := worktreeHead(worktreePath)
+	if err != nil {
+		return err
+	}
+	if expectedHead == "" || head != expectedHead {
+		return fmt.Errorf("worktree HEAD changed since safety check: was %s, now %s", expectedHead, head)
+	}
 	if _, err := runGit(worktreePath, "checkout", "--detach", "--force", ref); err != nil {
 		return err
 	}
 	if _, err := runGit(worktreePath, "reset", "--hard", ref); err != nil {
 		return err
 	}
-	_, err := runGit(worktreePath, "clean", "-fd")
+	_, err = runGit(worktreePath, "clean", "-fd")
 	return err
 }
 
@@ -226,17 +239,27 @@ func resolveResetRef(worktreePath, branch string) (string, error) {
 	return refCommit(worktreePath, ref)
 }
 
+func worktreeHead(worktreePath string) (string, error) {
+	return runGit(worktreePath, "rev-parse", "--verify", "HEAD^{commit}")
+}
+
 // IsWorktreeSafeToReset reports whether worktreePath can be reset to branch
-// without discarding committed work and returns the immutable commit it checked.
-// Callers must pass that commit to ResetWorktreeToRef so verification and reset
-// share one target. The check fails closed when the target cannot be resolved.
-func IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, error) {
+// without discarding committed work and returns the immutable reset target and
+// the worktree HEAD recorded at check time. Callers must pass both to
+// ResetWorktreeToRef so verification and reset share one target and a later
+// HEAD change is refused. The check fails closed when the target or HEAD
+// cannot be resolved.
+func IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, string, error) {
 	ref, err := resolveResetRef(worktreePath, branch)
 	if err != nil {
-		return false, "", err
+		return false, "", "", err
+	}
+	head, err := worktreeHead(worktreePath)
+	if err != nil {
+		return false, "", "", err
 	}
 	safe, err := IsHeadMergedIntoRef(worktreePath, ref)
-	return safe, ref, err
+	return safe, ref, head, err
 }
 
 func DetachWorktree(worktreePath string) error {
@@ -480,10 +503,10 @@ func (*Backend) Fetch(repoRoot string) error { return Fetch(repoRoot) }
 func (*Backend) ResetWorktree(worktreePath, branch string) error {
 	return ResetWorktree(worktreePath, branch)
 }
-func (*Backend) ResetWorktreeToRef(worktreePath, ref string) error {
-	return ResetWorktreeToRef(worktreePath, ref)
+func (*Backend) ResetWorktreeToRef(worktreePath, ref, expectedHead string) error {
+	return ResetWorktreeToRef(worktreePath, ref, expectedHead)
 }
-func (*Backend) IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, error) {
+func (*Backend) IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, string, error) {
 	return IsWorktreeSafeToReset(worktreePath, branch)
 }
 func (*Backend) DetachWorktree(worktreePath string) error { return DetachWorktree(worktreePath) }

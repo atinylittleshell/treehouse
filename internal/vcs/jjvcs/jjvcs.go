@@ -272,11 +272,17 @@ func (b *Backend) ResetWorktree(worktreePath, branch string) error {
 	if err != nil {
 		return err
 	}
-	return b.ResetWorktreeToRef(worktreePath, ref)
+	head, err := worktreeHead(worktreePath)
+	if err != nil {
+		return err
+	}
+	return b.ResetWorktreeToRef(worktreePath, ref, head)
 }
 
 // ResetWorktreeToRef resets worktreePath to an already resolved commit.
-func (b *Backend) ResetWorktreeToRef(worktreePath, ref string) error {
+// expectedHead is the working-copy commit recorded at check time; if @ has
+// changed, the reset is refused so concurrent committed work is not discarded.
+func (b *Backend) ResetWorktreeToRef(worktreePath, ref, expectedHead string) error {
 	// A sibling workspace may have moved the repo since this workspace was
 	// last used; recover first so the commands below see current state.
 	_, _ = runJJ(worktreePath, "workspace", "update-stale")
@@ -288,6 +294,14 @@ func (b *Backend) ResetWorktreeToRef(worktreePath, ref string) error {
 		if perr == nil && parent != "" && parent == ref {
 			return nil
 		}
+	}
+
+	head, err := worktreeHead(worktreePath)
+	if err != nil {
+		return err
+	}
+	if expectedHead == "" || head != expectedHead {
+		return fmt.Errorf("worktree HEAD changed since safety check: was %s, now %s", expectedHead, head)
 	}
 
 	if _, err := runJJ(worktreePath, "abandon", "-r", "@"); err != nil {
@@ -316,17 +330,37 @@ func resolveResetRef(worktreePath, branch string) (string, error) {
 	return target, nil
 }
 
+func worktreeHead(worktreePath string) (string, error) {
+	target, err := runJJ(worktreePath, "log", "-r", "@", "--no-graph", "-T", `commit_id ++ "\n"`)
+	if err != nil {
+		return "", err
+	}
+	if i := strings.IndexByte(target, '\n'); i >= 0 {
+		target = target[:i]
+	}
+	if target == "" {
+		return "", fmt.Errorf("cannot resolve working-copy commit")
+	}
+	return target, nil
+}
+
 // IsWorktreeSafeToReset reports whether worktreePath can be reset to branch
-// without discarding committed work and returns the immutable commit it checked.
-// Callers must pass that commit to ResetWorktreeToRef so verification and reset
-// share one target. The check fails closed when the target cannot be resolved.
-func (b *Backend) IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, error) {
+// without discarding committed work and returns the immutable reset target and
+// the working-copy commit recorded at check time. Callers must pass both to
+// ResetWorktreeToRef so verification and reset share one target and a later
+// HEAD change is refused. The check fails closed when the target or HEAD
+// cannot be resolved.
+func (b *Backend) IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, string, error) {
 	ref, err := resolveResetRef(worktreePath, branch)
 	if err != nil {
-		return false, "", err
+		return false, "", "", err
+	}
+	head, err := worktreeHead(worktreePath)
+	if err != nil {
+		return false, "", "", err
 	}
 	safe, err := b.IsHeadMergedIntoRef(worktreePath, ref)
-	return safe, ref, err
+	return safe, ref, head, err
 }
 
 // DetachWorktree is a no-op: jj working copies are anonymous commits and
