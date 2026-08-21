@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 
@@ -176,7 +177,7 @@ func findMarkerRoot(dir string) (root string, hasJJ, hasGit bool) {
 // ~/.config/treehouse/config.toml. The files are read directly here (rather
 // than through internal/config) because config depends on this package.
 func vcsOverride(repoRoot string) string {
-	if v := normalizeVCSName(os.Getenv("TREEHOUSE_VCS")); v != "" {
+	if v := normalizeVCSNameFrom("TREEHOUSE_VCS", os.Getenv("TREEHOUSE_VCS")); v != "" {
 		return v
 	}
 	if v := vcsFromFile(filepath.Join(repoRoot, "treehouse.toml")); v != "" {
@@ -195,13 +196,32 @@ func vcsFromFile(path string) string {
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return ""
 	}
-	return normalizeVCSName(cfg.VCS)
+	return normalizeVCSNameFrom(path, cfg.VCS)
 }
 
 func normalizeVCSName(v string) string {
 	switch v {
 	case "git", "jj":
 		return v
+	}
+	return ""
+}
+
+// warnedVCSValues dedupes unrecognized-value warnings: backend selection
+// runs many times per command and the warning is for a human, once.
+var warnedVCSValues sync.Map
+
+// normalizeVCSNameFrom is normalizeVCSName plus a one-time stderr warning
+// naming the source, so a misconfigured opt-in ("Jujutsu", "JJ", a stray
+// space) surfaces instead of silently keeping the default. The value is
+// still ignored: a typo must not break every command in the repository, and
+// stdout stays clean for machine callers.
+func normalizeVCSNameFrom(source, v string) string {
+	if n := normalizeVCSName(v); n != "" || v == "" {
+		return n
+	}
+	if _, seen := warnedVCSValues.LoadOrStore(source+"\x00"+v, true); !seen {
+		fmt.Fprintf(os.Stderr, "treehouse: unrecognized vcs value %q in %s (expected \"git\" or \"jj\"); ignoring it\n", v, source)
 	}
 	return ""
 }

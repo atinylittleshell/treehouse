@@ -1,6 +1,7 @@
 package vcs
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -392,5 +393,45 @@ func TestWorktreeFactsUseSlotFlavor(t *testing.T) {
 	}
 	if !dirty {
 		t.Fatal("the slot's own jj facts say dirty; reading the enclosing repository said clean")
+	}
+}
+
+// TestUnrecognizedVCSValueWarnsOnceAndDefaults pins the misconfiguration
+// contract: a value like "Jujutsu" is ignored (git default preserved) but a
+// warning names the bad value and its source exactly once, on stderr only.
+func TestUnrecognizedVCSValueWarnsOnceAndDefaults(t *testing.T) {
+	isolateUserConfig(t)
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "treehouse.toml"), []byte("vcs = \"Jujutsu\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = oldStderr }()
+
+	first := backendFor(dir).Name()
+	second := backendFor(dir).Name()
+	w.Close()
+	os.Stderr = oldStderr
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if first != "git" || second != "git" {
+		t.Fatalf("unrecognized value must keep the git default, got %q/%q", first, second)
+	}
+	warning := string(out)
+	if !strings.Contains(warning, "Jujutsu") || !strings.Contains(warning, "treehouse.toml") {
+		t.Fatalf("warning must name the value and its source, got %q", warning)
+	}
+	if strings.Count(warning, "unrecognized vcs value") != 1 {
+		t.Fatalf("warning must appear exactly once across repeated selection, got %q", warning)
 	}
 }
