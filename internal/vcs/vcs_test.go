@@ -347,3 +347,50 @@ func TestRemoveWorktreeDispatchesOnSlotFlavorJJWithoutOptIn(t *testing.T) {
 		t.Fatalf("jj workspace registration left stale after removal:\n%s", out)
 	}
 }
+
+// TestWorktreeFactsUseSlotFlavor pins the deletion-safety contract behind
+// destroy/prune: the facts that gate destruction (dirty, merged) must come
+// from the slot's own VCS even when the repository's opt-in is gone. Before
+// this dispatch existed, a .jj-only slot inspected without the opt-in fell
+// back to git, which walked up and read the ENCLOSING repository's facts: in
+// an in-project pool a clean enclosing repo made dirty jj work classify as
+// clean and merged - i.e. disposable.
+func TestWorktreeFactsUseSlotFlavor(t *testing.T) {
+	if _, err := exec.LookPath("jj"); err != nil {
+		t.Skip("jj is not installed")
+	}
+	isolateJJConfig(t)
+	isolateUserConfig(t)
+	dir := t.TempDir()
+	mustRun(t, dir, "git", "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, dir, "git", "add", "-A")
+	mustRun(t, dir, "git", "-c", "user.name=t", "-c", "user.email=t@e.com", "commit", "-qm", "init")
+	mustRun(t, dir, "jj", "git", "init", "--colocate")
+
+	// The jj slot lives INSIDE the (clean, on-main) repository, as an
+	// in-project pool root would place it, and is created under an opt-in
+	// that is gone again by inspection time.
+	slot := filepath.Join(dir, "pool", "1", "repo")
+	if err := os.MkdirAll(filepath.Dir(slot), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TREEHOUSE_VCS", "jj")
+	if err := AddWorktree(dir, slot, "main"); err != nil {
+		t.Fatalf("creating the jj slot: %v", err)
+	}
+	t.Setenv("TREEHOUSE_VCS", "")
+	if err := os.WriteFile(filepath.Join(slot, "wip.txt"), []byte("unlanded\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dirty, err := IsDirty(slot)
+	if err != nil {
+		t.Fatalf("IsDirty on the jj slot without opt-in: %v", err)
+	}
+	if !dirty {
+		t.Fatal("the slot's own jj facts say dirty; reading the enclosing repository said clean")
+	}
+}

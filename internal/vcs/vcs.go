@@ -217,9 +217,11 @@ func FindRepoRootFrom(dir string) (string, error) { return backendFor(dir).FindR
 // directory, resolving linked worktrees back to their owning repository.
 func FindMainRepoRoot() (string, error) { return backendFor("").FindMainRepoRootFrom("") }
 
-// FindMainRepoRootFrom returns the main repository root for dir.
+// FindMainRepoRootFrom returns the main repository root for dir. When dir is
+// itself a worktree (it holds a VCS marker), its own flavor answers; for any
+// other directory the configured backend does, exactly as before.
 func FindMainRepoRootFrom(dir string) (string, error) {
-	return backendFor(dir).FindMainRepoRootFrom(dir)
+	return backendForWorktree(dir).FindMainRepoRootFrom(dir)
 }
 
 // GetDefaultBranch returns the repository's default branch name.
@@ -258,21 +260,42 @@ func RemoveCleanWorktree(repoRoot, path string) error {
 	return backendForRemoval(repoRoot, path).RemoveCleanWorktree(repoRoot, path)
 }
 
-// backendForRemoval dispatches removal on what the worktree actually is (its
-// own marker), not on the repository's configured backend. A pool can
-// legitimately hold slots of both flavors after an opt-in change, and routing
-// a git worktree through jj removal deletes its directory without
-// deregistering it from .git/worktrees (the reverse direction errors and
-// leaves the slot stranded). This is artifact-typed dispatch, not backend
-// selection: creating worktrees still follows the explicit opt-in. A missing
-// or empty path falls back to the repository's backend so error surfacing is
-// unchanged.
-func backendForRemoval(repoRoot, path string) Backend {
+// slotMarkerBackend reports the backend a worktree's own marker names: a
+// .git entry means a git worktree, a .jj directory means a jj workspace.
+// Pool slots hold exactly one of the two (jj workspaces are never
+// colocated), so the marker identifies what the slot actually is regardless
+// of the repository's configured backend.
+func slotMarkerBackend(path string) Backend {
 	if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
 		return gitBackend
 	}
 	if info, err := os.Stat(filepath.Join(path, ".jj")); err == nil && info.IsDir() {
 		return jjBackend
+	}
+	return nil
+}
+
+// backendForWorktree dispatches per-worktree operations - the facts that
+// gate destructive decisions (dirty, merged, main-root) and the actions on a
+// slot's own state (reset, detach) - on what the worktree actually is. The
+// configured backend must not answer for a slot of the other flavor: a
+// .jj-only slot inspected through git resolves the repository ENCLOSING the
+// pool, and with an in-project pool root a clean enclosing repo makes dirty
+// jj work classify as disposable. Paths without a marker (ordinary
+// directories inside a repository) keep the configured-backend resolution.
+func backendForWorktree(path string) Backend {
+	if b := slotMarkerBackend(path); b != nil {
+		return b
+	}
+	return backendFor(path)
+}
+
+// backendForRemoval dispatches removal the same way, but falls back to the
+// repository's backend when the path is already gone, so error surfacing and
+// stale-registration cleanup stay exactly as they were.
+func backendForRemoval(repoRoot, path string) Backend {
+	if b := slotMarkerBackend(path); b != nil {
+		return b
 	}
 	return backendFor(repoRoot)
 }
@@ -282,7 +305,7 @@ func Fetch(repoRoot string) error { return backendFor(repoRoot).Fetch(repoRoot) 
 
 // ResetWorktree returns a worktree to a pristine checkout of branch.
 func ResetWorktree(worktreePath, branch string) error {
-	return backendFor(worktreePath).ResetWorktree(worktreePath, branch)
+	return backendForWorktree(worktreePath).ResetWorktree(worktreePath, branch)
 }
 
 // ResetWorktreeToRef resets worktreePath to an already resolved commit.
@@ -299,7 +322,7 @@ func IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, string, e
 
 // DetachWorktree releases any branch the worktree has checked out.
 func DetachWorktree(worktreePath string) error {
-	return backendFor(worktreePath).DetachWorktree(worktreePath)
+	return backendForWorktree(worktreePath).DetachWorktree(worktreePath)
 }
 
 // DefaultBranchMergeRef returns the fully qualified ref merge-safety checks
@@ -311,12 +334,12 @@ func DefaultBranchMergeRef(repoRoot string) (string, error) {
 // IsHeadMergedIntoRef reports whether the worktree's current head is merged
 // into ref.
 func IsHeadMergedIntoRef(worktreePath, ref string) (bool, error) {
-	return backendFor(worktreePath).IsHeadMergedIntoRef(worktreePath, ref)
+	return backendForWorktree(worktreePath).IsHeadMergedIntoRef(worktreePath, ref)
 }
 
 // IsDirty reports tracked or untracked local changes in the worktree.
 func IsDirty(worktreePath string) (bool, error) {
-	return backendFor(worktreePath).IsDirty(worktreePath)
+	return backendForWorktree(worktreePath).IsDirty(worktreePath)
 }
 
 // ShortHash returns a short stable hash of s, used for pool directory naming.
