@@ -328,6 +328,13 @@ func TestResetWorktreeToRefRefusesWhenDirtyAfterSafetyCheck(t *testing.T) {
 		t.Fatal("expected fresh workspace to be safe to reset")
 	}
 
+	// Record the working-copy identity jj actually preserves. The moment
+	// any jj command snapshots the dirtied tree, @ is amended in place:
+	// its commit id changes but its change id and parent do not, and head
+	// (the commit id pinned at check time) is what makes the reset refuse.
+	changeBefore := strings.TrimSpace(mustJJ(t, wtPath, "log", "-r", "@", "--no-graph", "-T", "change_id"))
+	parentBefore := strings.TrimSpace(mustJJ(t, wtPath, "log", "-r", "@-", "--no-graph", "-T", "commit_id"))
+
 	scratch := filepath.Join(wtPath, "scratch.txt")
 	writeFile(t, scratch, "keep\n")
 
@@ -339,12 +346,16 @@ func TestResetWorktreeToRefRefusesWhenDirtyAfterSafetyCheck(t *testing.T) {
 		t.Fatalf("expected dirty-after-check error, got %v", err)
 	}
 
-	got, err := worktreeHead(wtPath)
-	if err != nil {
-		t.Fatalf("resolve preserved HEAD: %v", err)
+	// Commit-id equality across a dirtying event is not a jj invariant:
+	// snapshotting amends @'s commit id. Assert what the refusal
+	// guarantees instead - same change, same parent, work intact.
+	changeAfter := strings.TrimSpace(mustJJ(t, wtPath, "log", "-r", "@", "--no-graph", "-T", "change_id"))
+	if changeAfter != changeBefore {
+		t.Fatalf("expected working-copy change %s preserved, got %s", changeBefore, changeAfter)
 	}
-	if got != head {
-		t.Fatalf("expected HEAD %s preserved, got %s", head, got)
+	parentAfter := strings.TrimSpace(mustJJ(t, wtPath, "log", "-r", "@-", "--no-graph", "-T", "commit_id"))
+	if parentAfter != parentBefore {
+		t.Fatalf("expected parent %s preserved, got %s", parentBefore, parentAfter)
 	}
 	contents, err := os.ReadFile(scratch)
 	if err != nil {
