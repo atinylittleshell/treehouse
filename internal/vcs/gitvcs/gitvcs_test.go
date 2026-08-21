@@ -280,7 +280,7 @@ func TestResetWorktreeUsesCommitVerifiedBySafetyCheck(t *testing.T) {
 	mustGit(t, repoDir, "add", "advanced.txt")
 	mustGit(t, repoDir, "commit", "-m", "advance main")
 
-	if err := ResetWorktreeToRef(wtPath, resetRef, head); err != nil {
+	if err := ResetWorktreeToRef(wtPath, resetRef, head, true); err != nil {
 		t.Fatalf("ResetWorktreeToRef: %v", err)
 	}
 	got, err := runGit(wtPath, "rev-parse", "HEAD")
@@ -333,7 +333,7 @@ func TestResetWorktreeToRefRefusesWhenHeadChanged(t *testing.T) {
 		t.Fatal("expected HEAD to change after the concurrent commit")
 	}
 
-	if err := ResetWorktreeToRef(wtPath, resetRef, head); err == nil {
+	if err := ResetWorktreeToRef(wtPath, resetRef, head, true); err == nil {
 		t.Fatal("expected ResetWorktreeToRef to refuse after HEAD changed")
 	}
 	got, err := runGit(wtPath, "rev-parse", "HEAD")
@@ -385,7 +385,7 @@ func TestResetWorktreeToRefRefusesWhenHeadLockHeld(t *testing.T) {
 		_ = os.Remove(lockPath)
 	}()
 
-	if err := ResetWorktreeToRef(wtPath, resetRef, head); err == nil {
+	if err := ResetWorktreeToRef(wtPath, resetRef, head, true); err == nil {
 		t.Fatal("expected ResetWorktreeToRef to refuse when git HEAD.lock is held")
 	}
 	got, err := runGit(wtPath, "rev-parse", "HEAD")
@@ -408,6 +408,122 @@ func TestResetWorktreeToRefRefusesWhenHeadLockHeld(t *testing.T) {
 	} else if got != head {
 		t.Fatalf("expected git commit not to move HEAD while locked, got %s", got)
 	}
+}
+
+func TestResetWorktreeToRefRefusesWhenDirtyAfterSafetyCheck(t *testing.T) {
+	cases := []struct {
+		name  string
+		dirty func(t *testing.T, wtPath string) (keepPath, keepContents string)
+	}{
+		{
+			name: "untracked file",
+			dirty: func(t *testing.T, wtPath string) (string, string) {
+				path := filepath.Join(wtPath, "scratch.txt")
+				if err := os.WriteFile(path, []byte("keep\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return path, "keep\n"
+			},
+		},
+		{
+			name: "tracked modification",
+			dirty: func(t *testing.T, wtPath string) (string, string) {
+				path := filepath.Join(wtPath, "README.md")
+				if err := os.WriteFile(path, []byte("changed\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return path, "changed\n"
+			},
+		},
+		{
+			name: "index update",
+			dirty: func(t *testing.T, wtPath string) (string, string) {
+				path := filepath.Join(wtPath, "staged.txt")
+				if err := os.WriteFile(path, []byte("keep\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				mustGit(t, wtPath, "add", "staged.txt")
+				return path, "keep\n"
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wtPath, resetRef, head := setupSafeResetWorktree(t)
+			keepPath, keepContents := tc.dirty(t, wtPath)
+
+			err := ResetWorktreeToRef(wtPath, resetRef, head, true)
+			if err == nil {
+				t.Fatal("expected ResetWorktreeToRef to refuse after the tree became dirty")
+			}
+			if !strings.Contains(err.Error(), "became dirty after safety check") {
+				t.Fatalf("expected dirty-after-check error, got %v", err)
+			}
+
+			got, err := runGit(wtPath, "rev-parse", "HEAD")
+			if err != nil {
+				t.Fatalf("resolve preserved HEAD: %v", err)
+			}
+			if got != head {
+				t.Fatalf("expected HEAD %s preserved, got %s", head, got)
+			}
+			contents, err := os.ReadFile(keepPath)
+			if err != nil {
+				t.Fatalf("expected concurrent uncommitted work preserved on disk: %v", err)
+			}
+			if string(contents) != keepContents {
+				t.Fatalf("expected %q preserved, got %q", keepContents, contents)
+			}
+		})
+	}
+}
+
+func TestResetWorktreeToRefDiscardsDirtyWithoutRequireClean(t *testing.T) {
+	wtPath, resetRef, head := setupSafeResetWorktree(t)
+	scratch := filepath.Join(wtPath, "scratch.txt")
+	if err := os.WriteFile(scratch, []byte("discard\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ResetWorktreeToRef(wtPath, resetRef, head, false); err != nil {
+		t.Fatalf("ResetWorktreeToRef without requireClean: %v", err)
+	}
+	got, err := runGit(wtPath, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("resolve reset HEAD: %v", err)
+	}
+	if got != resetRef {
+		t.Fatalf("reset targeted %s, want %s", got, resetRef)
+	}
+	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+		t.Fatal("expected return-path reset to discard uncommitted work")
+	}
+}
+
+func setupSafeResetWorktree(t *testing.T) (wtPath, resetRef, head string) {
+	t.Helper()
+	base := t.TempDir()
+	repoDir := filepath.Join(base, "repo")
+	wtPath = filepath.Join(base, "worktree")
+
+	mustGit(t, "", "init", "--initial-branch=main", repoDir)
+	mustGit(t, repoDir, "config", "user.email", "test@test.com")
+	mustGit(t, repoDir, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, repoDir, "add", ".")
+	mustGit(t, repoDir, "commit", "-m", "initial")
+	mustGit(t, repoDir, "worktree", "add", "--detach", wtPath, "main")
+
+	safe, resetRef, head, err := IsWorktreeSafeToReset(wtPath, "main")
+	if err != nil {
+		t.Fatalf("IsWorktreeSafeToReset: %v", err)
+	}
+	if !safe {
+		t.Fatal("expected worktree at base to be safe to reset")
+	}
+	return wtPath, resetRef, head
 }
 
 func mustGit(t *testing.T, dir string, args ...string) {

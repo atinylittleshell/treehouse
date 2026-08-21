@@ -67,9 +67,12 @@ type Backend interface {
 	ResetWorktree(worktreePath, branch string) error
 	// ResetWorktreeToRef resets worktreePath to an already resolved commit.
 	// Callers that verified safety must pass the reset target and worktree
-	// HEAD returned by IsWorktreeSafeToReset. The reset re-reads HEAD and
-	// refuses if it changed, so concurrent committed work is not discarded.
-	ResetWorktreeToRef(worktreePath, ref, expectedHead string) error
+	// HEAD returned by IsWorktreeSafeToReset. The reset re-reads HEAD and,
+	// when requireClean is set, re-checks dirtiness under the exclusive
+	// lock before any destructive tree update, so concurrent uncommitted
+	// work is not discarded. Refuse if HEAD changed, the lock cannot be
+	// taken, or (when requireClean) the tree is dirty.
+	ResetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean bool) error
 	// IsWorktreeSafeToReset reports whether worktreePath can be reset to
 	// branch without discarding committed work. It returns the immutable
 	// reset target and the worktree HEAD recorded at check time. Callers
@@ -283,8 +286,8 @@ func ResetWorktree(worktreePath, branch string) error {
 }
 
 // ResetWorktreeToRef resets worktreePath to an already resolved commit.
-func ResetWorktreeToRef(worktreePath, ref, expectedHead string) error {
-	return backendFor(worktreePath).ResetWorktreeToRef(worktreePath, ref, expectedHead)
+func ResetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean bool) error {
+	return backendFor(worktreePath).ResetWorktreeToRef(worktreePath, ref, expectedHead, requireClean)
 }
 
 // IsWorktreeSafeToReset reports whether worktreePath can be reset to branch

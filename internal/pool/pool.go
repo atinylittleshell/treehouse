@@ -158,8 +158,9 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 				continue
 			}
 			// Found an available one. Reset it to the verified commit only if
-			// HEAD is still the one whose ancestry was checked.
-			if err := vcs.ResetWorktreeToRef(wt.Path, resetRef, head); err != nil {
+			// HEAD is still the one whose ancestry was checked and the tree is
+			// still clean under the exclusive lock.
+			if err := vcs.ResetWorktreeToRef(wt.Path, resetRef, head, true); err != nil {
 				continue
 			}
 			if err := markAcquired(&state.Worktrees[i], opts); err != nil {

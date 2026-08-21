@@ -207,7 +207,7 @@ func ResetWorktree(worktreePath, branch string) error {
 	if err != nil {
 		return err
 	}
-	return ResetWorktreeToRef(worktreePath, ref, head)
+	return ResetWorktreeToRef(worktreePath, ref, head, false)
 }
 
 // ResetWorktreeToRef resets worktreePath to an already resolved commit.
@@ -216,10 +216,13 @@ func ResetWorktree(worktreePath, branch string) error {
 // The re-read and the destructive update run while holding git's own
 // HEAD.lock (O_CREAT|O_EXCL). Concurrent git processes that would change
 // HEAD (commit, checkout, merge, rebase) cannot create that lock, so they
-// cannot sneak a new commit in after the comparison. The worktree is
-// updated with read-tree/clean, which do not need HEAD.lock; HEAD itself is
-// committed by renaming the lock file onto HEAD, the same protocol git uses.
-func ResetWorktreeToRef(worktreePath, ref, expectedHead string) error {
+// cannot sneak a new commit in after the comparison. When requireClean is
+// set, dirtiness is re-checked under that lock before read-tree/clean, so
+// uncommitted file or index changes that landed after the caller's dirty
+// check are not overwritten. The worktree is updated with read-tree/clean,
+// which do not need HEAD.lock; HEAD itself is committed by renaming the
+// lock file onto HEAD, the same protocol git uses.
+func ResetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean bool) error {
 	if !isCommitID(expectedHead) || !isCommitID(ref) {
 		return fmt.Errorf("worktree reset requires resolved commit IDs")
 	}
@@ -246,6 +249,15 @@ func ResetWorktreeToRef(worktreePath, ref, expectedHead string) error {
 	}
 	if head != expectedHead {
 		return fmt.Errorf("worktree HEAD changed since safety check: was %s, now %s", expectedHead, head)
+	}
+	if requireClean {
+		dirty, err := IsDirty(worktreePath)
+		if err != nil {
+			return err
+		}
+		if dirty {
+			return fmt.Errorf("worktree became dirty after safety check")
+		}
 	}
 
 	if _, err := runGit(worktreePath, "read-tree", "--reset", "-u", ref); err != nil {
@@ -577,8 +589,8 @@ func (*Backend) Fetch(repoRoot string) error { return Fetch(repoRoot) }
 func (*Backend) ResetWorktree(worktreePath, branch string) error {
 	return ResetWorktree(worktreePath, branch)
 }
-func (*Backend) ResetWorktreeToRef(worktreePath, ref, expectedHead string) error {
-	return ResetWorktreeToRef(worktreePath, ref, expectedHead)
+func (*Backend) ResetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean bool) error {
+	return ResetWorktreeToRef(worktreePath, ref, expectedHead, requireClean)
 }
 func (*Backend) IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, string, error) {
 	return IsWorktreeSafeToReset(worktreePath, branch)

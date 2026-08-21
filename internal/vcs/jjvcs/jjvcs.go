@@ -276,7 +276,7 @@ func (b *Backend) ResetWorktree(worktreePath, branch string) error {
 	if err != nil {
 		return err
 	}
-	return b.ResetWorktreeToRef(worktreePath, ref, head)
+	return b.ResetWorktreeToRef(worktreePath, ref, head, false)
 }
 
 // ResetWorktreeToRef resets worktreePath to an already resolved commit.
@@ -288,8 +288,10 @@ func (b *Backend) ResetWorktree(worktreePath, branch string) error {
 // `@ & commit_id(expectedHead)`. That command loads one snapshot, so a
 // concurrent change of @ makes the revset empty and the rebase a no-op. If
 // the workspace is then not parked on the reset target, the reset is refused
-// and the slot is skipped.
-func (b *Backend) ResetWorktreeToRef(worktreePath, ref, expectedHead string) error {
+// and the slot is skipped. When requireClean is set, dirtiness is re-checked
+// before rebase/abandon so uncommitted working-copy changes that landed after
+// the caller's dirty check are not discarded.
+func (b *Backend) ResetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean bool) error {
 	// A sibling workspace may have moved the repo since this workspace was
 	// last used; recover first so the commands below see current state.
 	_, _ = runJJ(worktreePath, "workspace", "update-stale")
@@ -303,7 +305,11 @@ func (b *Backend) ResetWorktreeToRef(worktreePath, ref, expectedHead string) err
 	if err != nil {
 		return err
 	}
-	if !dirty {
+	if dirty {
+		if requireClean {
+			return fmt.Errorf("worktree became dirty after safety check")
+		}
+	} else {
 		if _, err := runJJ(worktreePath, "rebase", "-d", ref, "-r", revset); err != nil {
 			if parked, perr := b.parkedOnRef(worktreePath, ref); perr == nil && parked {
 				if head, herr := worktreeHead(worktreePath); herr == nil && head == expectedHead {
