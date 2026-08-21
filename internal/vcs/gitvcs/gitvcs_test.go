@@ -1,11 +1,13 @@
 package gitvcs
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRepoRootFromCommonGitDirHandlesForwardSlashPath(t *testing.T) {
@@ -343,6 +345,68 @@ func TestResetWorktreeToRefRefusesWhenHeadChanged(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(wtPath, "unlanded.txt")); err != nil {
 		t.Fatalf("expected concurrent commit preserved on disk: %v", err)
+	}
+}
+
+func TestResetWorktreeToRefRefusesWhenHeadLockHeld(t *testing.T) {
+	base := t.TempDir()
+	repoDir := filepath.Join(base, "repo")
+	wtPath := filepath.Join(base, "worktree")
+
+	mustGit(t, "", "init", "--initial-branch=main", repoDir)
+	mustGit(t, repoDir, "config", "user.email", "test@test.com")
+	mustGit(t, repoDir, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, repoDir, "add", ".")
+	mustGit(t, repoDir, "commit", "-m", "initial")
+	mustGit(t, repoDir, "worktree", "add", "--detach", wtPath, "main")
+
+	safe, resetRef, head, err := IsWorktreeSafeToReset(wtPath, "main")
+	if err != nil {
+		t.Fatalf("IsWorktreeSafeToReset: %v", err)
+	}
+	if !safe {
+		t.Fatal("expected worktree at base to be safe to reset")
+	}
+
+	headPath, err := gitPath(wtPath, "HEAD")
+	if err != nil {
+		t.Fatalf("resolve HEAD path: %v", err)
+	}
+	lockPath := headPath + ".lock"
+	lf, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0666)
+	if err != nil {
+		t.Fatalf("create HEAD.lock: %v", err)
+	}
+	defer func() {
+		_ = lf.Close()
+		_ = os.Remove(lockPath)
+	}()
+
+	if err := ResetWorktreeToRef(wtPath, resetRef, head); err == nil {
+		t.Fatal("expected ResetWorktreeToRef to refuse when git HEAD.lock is held")
+	}
+	got, err := runGit(wtPath, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("resolve preserved HEAD: %v", err)
+	}
+	if got != head {
+		t.Fatalf("expected HEAD %s preserved under HEAD.lock, got %s", head, got)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "commit", "--allow-empty", "-m", "concurrent")
+	cmd.Dir = wtPath
+	if err := cmd.Run(); err == nil {
+		t.Fatal("expected git commit to honor an existing HEAD.lock")
+	}
+	if got, err := runGit(wtPath, "rev-parse", "HEAD"); err != nil {
+		t.Fatalf("resolve HEAD after concurrent commit: %v", err)
+	} else if got != head {
+		t.Fatalf("expected git commit not to move HEAD while locked, got %s", got)
 	}
 }
 

@@ -280,35 +280,99 @@ func (b *Backend) ResetWorktree(worktreePath, branch string) error {
 }
 
 // ResetWorktreeToRef resets worktreePath to an already resolved commit.
-// expectedHead is the working-copy commit recorded at check time; if @ has
-// changed, the reset is refused so concurrent committed work is not discarded.
+// expectedHead is the working-copy commit recorded at check time.
+//
+// jj is lock-free: concurrent commands snapshot the operation log and always
+// commit, so no flock or private lock can exclude a parallel `jj commit`.
+// The destructive rewrite is therefore a single `jj rebase` whose revset is
+// `@ & commit_id(expectedHead)`. That command loads one snapshot, so a
+// concurrent change of @ makes the revset empty and the rebase a no-op. If
+// the workspace is then not parked on the reset target, the reset is refused
+// and the slot is skipped.
 func (b *Backend) ResetWorktreeToRef(worktreePath, ref, expectedHead string) error {
 	// A sibling workspace may have moved the repo since this workspace was
 	// last used; recover first so the commands below see current state.
 	_, _ = runJJ(worktreePath, "workspace", "update-stale")
 
-	// Skip the reset when the workspace is already clean and parked on ref.
-	dirty, err := b.IsDirty(worktreePath)
-	if err == nil && !dirty {
-		parent, perr := runJJ(worktreePath, "log", "-r", "@-", "--no-graph", "-T", `commit_id ++ "\n"`)
-		if perr == nil && parent != "" && parent == ref {
-			return nil
-		}
+	if !isCommitID(expectedHead) {
+		return fmt.Errorf("worktree reset requires a resolved working-copy commit")
 	}
 
-	head, err := worktreeHead(worktreePath)
+	revset := "@ & commit_id(\"" + expectedHead + "\")"
+	dirty, err := b.IsDirty(worktreePath)
 	if err != nil {
 		return err
 	}
-	if expectedHead == "" || head != expectedHead {
-		return fmt.Errorf("worktree HEAD changed since safety check: was %s, now %s", expectedHead, head)
+	if !dirty {
+		if _, err := runJJ(worktreePath, "rebase", "-d", ref, "-r", revset); err != nil {
+			if parked, perr := b.parkedOnRef(worktreePath, ref); perr == nil && parked {
+				if head, herr := worktreeHead(worktreePath); herr == nil && head == expectedHead {
+					return nil
+				}
+			}
+			return err
+		}
+		parked, err := b.parkedOnRef(worktreePath, ref)
+		if err != nil {
+			return err
+		}
+		if !parked {
+			return fmt.Errorf("worktree HEAD changed since safety check: was %s", expectedHead)
+		}
+		return nil
 	}
 
-	if _, err := runJJ(worktreePath, "abandon", "-r", "@"); err != nil {
+	if _, err := runJJ(worktreePath, "abandon", "-r", revset); err != nil {
 		return err
+	}
+	if revsetNonEmpty(worktreePath, revset) {
+		return fmt.Errorf("worktree HEAD changed since safety check: was %s", expectedHead)
+	}
+	dirty, err = b.IsDirty(worktreePath)
+	if err != nil {
+		return err
+	}
+	if dirty {
+		return fmt.Errorf("worktree HEAD changed since safety check: was %s", expectedHead)
+	}
+	merged, err := b.IsHeadMergedIntoRef(worktreePath, ref)
+	if err != nil || !merged {
+		return fmt.Errorf("worktree HEAD changed since safety check: was %s", expectedHead)
 	}
 	_, err = runJJ(worktreePath, "new", ref)
 	return err
+}
+
+func (b *Backend) parkedOnRef(worktreePath, ref string) (bool, error) {
+	dirty, err := b.IsDirty(worktreePath)
+	if err != nil {
+		return false, err
+	}
+	if dirty {
+		return false, nil
+	}
+	parent, err := runJJ(worktreePath, "log", "-r", "@-", "--no-graph", "-T", `commit_id ++ "\n"`)
+	if err != nil {
+		return false, err
+	}
+	if i := strings.IndexByte(parent, '\n'); i >= 0 {
+		parent = parent[:i]
+	}
+	return parent != "" && parent == ref, nil
+}
+
+func isCommitID(s string) bool {
+	n := len(s)
+	if n != 40 && n != 64 {
+		return false
+	}
+	for i := 0; i < n; i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveResetRef(worktreePath, branch string) (string, error) {
