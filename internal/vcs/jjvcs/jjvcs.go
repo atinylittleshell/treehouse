@@ -48,7 +48,13 @@ var defaultBranchCandidates = []string{"main", "master", "trunk"}
 // FindRepoRootFrom returns the root of the jj workspace containing dir. An
 // empty dir means the current working directory.
 func (*Backend) FindRepoRootFrom(dir string) (string, error) {
-	return runJJ(dir, "workspace", "root")
+	root, err := runJJ(dir, "workspace", "root")
+	if err != nil {
+		return "", err
+	}
+	// jj prints a physical path today, but its output form is not
+	// contractual; canonicalize so every root-resolution route agrees.
+	return canonicalize(root), nil
 }
 
 // FindMainRepoRootFrom resolves dir to the main repository root. For a
@@ -74,7 +80,7 @@ func MainRootFromWorkspaceRoot(wsRoot string) (string, error) {
 	}
 	if info.IsDir() {
 		// The store lives here: this is the main workspace.
-		return wsRoot, nil
+		return canonicalize(wsRoot), nil
 	}
 	contents, err := os.ReadFile(repoPath)
 	if err != nil {
@@ -85,7 +91,10 @@ func MainRootFromWorkspaceRoot(wsRoot string) (string, error) {
 		storePath = filepath.Join(wsRoot, ".jj", storePath)
 	}
 	// storePath is <main>/.jj/repo; the main root is two levels up.
-	return filepath.Clean(filepath.Join(storePath, "..", "..")), nil
+	// Canonicalized on read as well as on write, so pointers written before
+	// canonicalization existed still resolve to the same pool identity as
+	// `jj workspace root`.
+	return canonicalize(filepath.Clean(filepath.Join(storePath, "..", ".."))), nil
 }
 
 // GetDefaultBranch returns the default bookmark name, preferring remote
@@ -178,9 +187,14 @@ func (b *Backend) AddWorktree(repoRoot, path, branch string) error {
 }
 
 // makeRepoPointerAbsolute rewrites the workspace's .jj/repo store pointer to
-// an absolute path. jj writes a relative pointer, which breaks when the pool
-// directory and the repository do not move together (the pool usually lives
-// under ~/.treehouse, far from the repo).
+// an absolute, symlink-canonicalized path. jj writes a relative pointer,
+// which breaks when the pool directory and the repository do not move
+// together (the pool usually lives under ~/.treehouse, far from the repo).
+// Canonicalizing on write mirrors git, which stores physical paths in a
+// worktree's .git gitdir pointer: every later read of the pointer then
+// agrees with `jj workspace root` (physical), so a repository reached
+// through a symlinked path (such as macOS /tmp) resolves to one pool
+// identity instead of forking into a real pool and a phantom one.
 func makeRepoPointerAbsolute(wsRoot string) error {
 	repoPath := filepath.Join(wsRoot, ".jj", "repo")
 	info, err := os.Stat(repoPath)
@@ -195,8 +209,20 @@ func makeRepoPointerAbsolute(wsRoot string) error {
 	if filepath.IsAbs(storePath) {
 		return nil
 	}
-	abs := filepath.Clean(filepath.Join(wsRoot, ".jj", storePath))
+	abs := canonicalize(filepath.Clean(filepath.Join(wsRoot, ".jj", storePath)))
 	return os.WriteFile(repoPath, []byte(abs), 0o644)
+}
+
+// canonicalize resolves symlinks in path, falling back to the input when
+// resolution fails (for example when the path does not exist yet). Root
+// resolution must return one canonical form no matter which route produced
+// the path, because the pool identity is derived from the path string.
+func canonicalize(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return path
+	}
+	return resolved
 }
 
 // workspaceNameFor derives a stable jj workspace name from a worktree path.

@@ -484,3 +484,57 @@ func TestRemoveWorktreeRefusesMainWorkspace(t *testing.T) {
 		t.Fatalf("repository contents must survive a refused removal: %v", err)
 	}
 }
+
+// TestSymlinkedRepoPathResolvesOneRootIdentity pins the symlink
+// canonicalization contract: a repository reached through a symlinked path
+// (like macOS's /tmp -> /private/tmp) must resolve to the same root string
+// from every route - `jj workspace root` in the main repo and the .jj/repo
+// pointer inside a pooled workspace - because the pool identity is derived
+// from that string. Before canonicalization the two routes disagreed and
+// treehouse status inside a workspace resolved a phantom, empty pool.
+func TestSymlinkedRepoPathResolvesOneRootIdentity(t *testing.T) {
+	requireJJ(t)
+	isolateJJConfig(t)
+	base := t.TempDir()
+	realDir := filepath.Join(base, "real")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkDir := filepath.Join(base, "link")
+	if err := os.Symlink(realDir, linkDir); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+
+	// Init and use the repository exclusively through the symlinked path.
+	repoVia := filepath.Join(linkDir, "repo")
+	if err := os.MkdirAll(repoVia, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustJJ(t, repoVia, "git", "init")
+	mustJJ(t, repoVia, "bookmark", "create", "main", "-r", "@")
+
+	b := &Backend{}
+	wsPath := filepath.Join(base, "ws")
+	if err := b.AddWorktree(repoVia, wsPath, "main"); err != nil {
+		t.Fatalf("AddWorktree through symlinked path: %v", err)
+	}
+
+	fromMain, err := b.FindRepoRootFrom(repoVia)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromWorkspace, err := b.FindMainRepoRootFrom(wsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(filepath.Join(realDir, "repo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromMain != want {
+		t.Fatalf("main-repo route: got %q, want physical %q", fromMain, want)
+	}
+	if fromWorkspace != want {
+		t.Fatalf("workspace route: got %q, want physical %q", fromWorkspace, want)
+	}
+}
