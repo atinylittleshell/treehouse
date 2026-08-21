@@ -5,8 +5,8 @@
 #
 # A PR passes when any of these hold:
 #   * its body carries the no-mistakes pipeline signature AND a parseable v1
-#     pipeline step attestation in which review, test, and document are
-#     status=completed, or
+#     pipeline step attestation whose head_sha equals the current PR head and
+#     in which review, test, and document are status=completed, or
 #   * it was opened by github-actions[bot] or dependabot[bot], or
 #   * it is structurally a release-please release PR (see below).
 #
@@ -21,7 +21,9 @@
 # has one executable surface that tests can drive directly.
 #
 # Inputs (environment):
-#   PR_BODY, PR_AUTHOR, PR_NUMBER, PR_HEAD_REF, PR_HEAD_REPO, PR_BASE_REPO
+#   PR_BODY, PR_AUTHOR, PR_NUMBER, PR_HEAD_REF, PR_HEAD_REPO, PR_BASE_REPO,
+#   PR_HEAD_SHA (github.event.pull_request.head.sha; required on the
+#   attestation path so a later push cannot pass on a stale comment)
 # Exit status: 0 = pass, 1 = fail.
 set -eu
 
@@ -39,6 +41,8 @@ pr_number="${PR_NUMBER:-unknown}"
 pr_head_ref="${PR_HEAD_REF:-}"
 pr_head_repo="${PR_HEAD_REPO:-}"
 pr_base_repo="${PR_BASE_REPO:-}"
+pr_head_sha="${PR_HEAD_SHA:-}"
+pr_head_sha=${pr_head_sha//$'\r'/}
 
 body_contains() {
     printf '%s' "$pr_body" | grep -qF -- "$1"
@@ -113,10 +117,35 @@ fail_incomplete_attestation() {
     exit 1
 }
 
+display_sha() {
+    if [ -n "$1" ]; then
+        printf '%s' "$1"
+    else
+        printf '%s' '(missing)'
+    fi
+}
+
+fail_attestation_head_sha() {
+    local attested_sha="$1"
+    {
+        echo "::error::This PR's no-mistakes pipeline attestation is not bound to the current pull request head."
+        echo
+        echo "The attestation head_sha must equal the current pull request head SHA so a later push cannot pass on a stale attestation."
+        echo "  attestation head_sha: $(display_sha "$attested_sha")"
+        echo "  pull request head:    $(display_sha "$pr_head_sha")"
+        echo
+        echo "Re-run 'git push no-mistakes' on the current head so the PR body attestation is rewritten for this commit."
+        echo
+        echo "PR author: ${pr_author}"
+    } >&2
+    exit 1
+}
+
 # Reads PR_BODY and prints one of:
 #   MISSING
 #   UNPARSEABLE
 #   PARSED
+#   head_sha=<value>   (empty when the field is missing or not a string)
 #   review=<status>
 #   test=<status>
 #   document=<status>
@@ -151,9 +180,13 @@ if not isinstance(payload, dict):
     sys.stdout.write("UNPARSEABLE\n")
     sys.exit(0)
 
-head_sha = payload.get("head_sha")
+raw_head_sha = payload.get("head_sha")
+if isinstance(raw_head_sha, str):
+    head_sha = raw_head_sha.strip()
+else:
+    head_sha = ""
 steps = payload.get("steps")
-if not isinstance(head_sha, str) or not head_sha.strip() or not isinstance(steps, list):
+if not isinstance(steps, list):
     sys.stdout.write("UNPARSEABLE\n")
     sys.exit(0)
 
@@ -175,13 +208,14 @@ for item in steps:
         statuses[name] = "missing"
 
 sys.stdout.write("PARSED\n")
+sys.stdout.write("head_sha=%s\n" % head_sha)
 for name in ("review", "test", "document"):
     sys.stdout.write("%s=%s\n" % (name, statuses.get(name, "missing")))
 PY
 }
 
 require_pipeline_attestation() {
-    local parsed kind pair name status rest
+    local parsed kind pair name status rest attested_sha=""
     local -a incomplete=()
 
     parsed=$(parse_pipeline_attestation || echo UNPARSEABLE)
@@ -197,12 +231,19 @@ require_pipeline_attestation() {
         [ -n "$pair" ] || continue
         name=${pair%%=*}
         status=${pair#*=}
+        if [ "$name" = head_sha ]; then
+            attested_sha=$status
+            continue
+        fi
         if [ "$status" != completed ]; then
             incomplete+=("  ${name}: ${status}")
         fi
     done <<EOF
 $rest
 EOF
+    if [ -z "$attested_sha" ] || [ -z "$pr_head_sha" ] || [ "$attested_sha" != "$pr_head_sha" ]; then
+        fail_attestation_head_sha "$attested_sha"
+    fi
     if [ "${#incomplete[@]}" -ne 0 ]; then
         fail_incomplete_attestation "${incomplete[@]}"
     fi
@@ -220,7 +261,7 @@ fi
 
 if body_contains "$NO_MISTAKES_MARKER"; then
     require_pipeline_attestation
-    echo "Found no-mistakes signature and completed review/test/document attestation in PR #${pr_number} body."
+    echo "Found no-mistakes signature and completed review/test/document attestation bound to head ${pr_head_sha} in PR #${pr_number} body."
     exit 0
 fi
 

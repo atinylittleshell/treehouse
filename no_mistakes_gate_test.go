@@ -84,6 +84,7 @@ type pullRequestEvent struct {
 	author   string
 	headRef  string
 	headRepo string
+	headSHA  string
 	baseRepo string
 }
 
@@ -99,6 +100,8 @@ func (e pullRequestEvent) lookup(path string) (string, bool) {
 		return e.headRef, true
 	case "github.event.pull_request.head.repo.full_name":
 		return e.headRepo, true
+	case "github.event.pull_request.head.sha":
+		return e.headSHA, true
 	case "github.event.pull_request.base.repo.full_name":
 		return e.baseRepo, true
 	default:
@@ -162,6 +165,10 @@ func runGate(t *testing.T, step gateStep, event pullRequestEvent) (bool, string)
 
 const (
 	noMistakesSignature = "## Pipeline\n\nUpdates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)\n"
+	// attestationHeadSHA is the compact v1 comment's head_sha. Passing cases
+	// bind github.event.pull_request.head.sha to this value.
+	attestationHeadSHA = "0123456789abcdef0123456789abcdef01234567"
+	otherHeadSHA       = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	// completedAttestation matches the compact v1 comment no-mistakes >= 1.46.0 writes.
 	// pr/ci are commonly still running/pending at PR write time and are not required.
 	completedAttestation = `<!-- no-mistakes-pipeline-attestation:v1 {"head_sha":"0123456789abcdef0123456789abcdef01234567","steps":[{"step":"intent","status":"completed"},{"step":"rebase","status":"completed"},{"step":"review","status":"completed"},{"step":"test","status":"completed"},{"step":"document","status":"completed"},{"step":"lint","status":"completed"},{"step":"push","status":"completed"},{"step":"pr","status":"running"},{"step":"ci","status":"pending"}]} -->`
@@ -240,7 +247,7 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 			name: "human PR carrying the no-mistakes signature and completed attestation passes",
 			event: pullRequestEvent{
 				number: 83, body: noMistakesBody, author: "kunchenguid",
-				headRef: "fm/some-work", headRepo: repo, baseRepo: repo,
+				headRef: "fm/some-work", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
 			},
 			pass: true,
 		},
@@ -270,7 +277,7 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 				number:  91,
 				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"step":"review","status":"completed"`, `"step":"review","status":"skipped"`, 1) + "\n",
 				author:  "kunchenguid",
-				headRef: "fm/skipped-review", headRepo: repo, baseRepo: repo,
+				headRef: "fm/skipped-review", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
 			},
 			pass:       false,
 			wantOutput: []string{"review: skipped", "Quota skips and agent skips are not compliant"},
@@ -282,7 +289,7 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 				number:  92,
 				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"step":"test","status":"completed"`, `"step":"test","status":"failed"`, 1) + "\n",
 				author:  "kunchenguid",
-				headRef: "fm/failed-test", headRepo: repo, baseRepo: repo,
+				headRef: "fm/failed-test", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
 			},
 			pass:       false,
 			wantOutput: []string{"test: failed"},
@@ -294,7 +301,7 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 				number:  93,
 				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"step":"document","status":"completed"`, `"step":"document","status":"pending"`, 1) + "\n",
 				author:  "kunchenguid",
-				headRef: "fm/pending-document", headRepo: repo, baseRepo: repo,
+				headRef: "fm/pending-document", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
 			},
 			pass:       false,
 			wantOutput: []string{"document: pending"},
@@ -306,7 +313,7 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 				number:  94,
 				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"step":"document","status":"completed"`, `"step":"document","status":"running"`, 1) + "\n",
 				author:  "kunchenguid",
-				headRef: "fm/running-document", headRepo: repo, baseRepo: repo,
+				headRef: "fm/running-document", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
 			},
 			pass:       false,
 			wantOutput: []string{"document: running"},
@@ -318,10 +325,56 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 				number:  95,
 				body:    noMistakesSignature + "\n<!-- no-mistakes-pipeline-attestation:v1 {\"head_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"steps\":[{\"step\":\"review\",\"status\":\"completed\"},{\"step\":\"test\",\"status\":\"completed\"}]} -->\n",
 				author:  "kunchenguid",
-				headRef: "fm/missing-document", headRepo: repo, baseRepo: repo,
+				headRef: "fm/missing-document", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
 			},
 			pass:       false,
 			wantOutput: []string{"document: missing"},
+			hideOutput: []string{attestationVersionFloor},
+		},
+		{
+			name: "human PR with attestation for a different head SHA fails",
+			event: pullRequestEvent{
+				number: 97, body: noMistakesBody, author: "kunchenguid",
+				headRef: "fm/stale-attestation", headRepo: repo, headSHA: otherHeadSHA, baseRepo: repo,
+			},
+			pass: false,
+			wantOutput: []string{
+				"not bound to the current pull request head",
+				"stale attestation",
+				attestationHeadSHA,
+				otherHeadSHA,
+			},
+			hideOutput: []string{attestationVersionFloor, "review: skipped"},
+		},
+		{
+			name: "human PR with empty attestation head_sha fails",
+			event: pullRequestEvent{
+				number:  98,
+				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"head_sha":"0123456789abcdef0123456789abcdef01234567"`, `"head_sha":""`, 1) + "\n",
+				author:  "kunchenguid",
+				headRef: "fm/empty-head-sha", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
+			},
+			pass: false,
+			wantOutput: []string{
+				"not bound to the current pull request head",
+				"attestation head_sha: (missing)",
+				attestationHeadSHA,
+			},
+			hideOutput: []string{attestationVersionFloor},
+		},
+		{
+			name: "human PR with attestation JSON missing head_sha fails",
+			event: pullRequestEvent{
+				number:  99,
+				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"head_sha":"0123456789abcdef0123456789abcdef01234567",`, "", 1) + "\n",
+				author:  "kunchenguid",
+				headRef: "fm/missing-head-sha", headRepo: repo, headSHA: attestationHeadSHA, baseRepo: repo,
+			},
+			pass: false,
+			wantOutput: []string{
+				"not bound to the current pull request head",
+				"attestation head_sha: (missing)",
+			},
 			hideOutput: []string{attestationVersionFloor},
 		},
 		{
