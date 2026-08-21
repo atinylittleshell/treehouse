@@ -149,7 +149,18 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			if wt.Destroying || wt.Leased || ownerAlive(wt) {
 				continue
 			}
-			if flavor := vcs.WorktreeBackendName(wt.Path); flavor != "" && flavor != wantFlavor {
+			flavor := vcs.WorktreeBackendName(wt.Path)
+			if flavor == "" {
+				// No .git or .jj marker: the slot is damaged or missing.
+				// Every dispatch on such a path falls back to the
+				// configured backend, which in an in-project pool resolves
+				// the repository ENCLOSING the pool - the safety checks
+				// would vouch for that repository and the reset would
+				// rewrite it. Fail closed and leave the slot for destroy
+				// and prune, whose paths never reset it.
+				continue
+			}
+			if flavor != wantFlavor {
 				otherFlavor++
 				continue
 			}

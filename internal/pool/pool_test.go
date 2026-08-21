@@ -2504,3 +2504,46 @@ func TestBackingRepositoryMissingJJ(t *testing.T) {
 		t.Fatal("a main workspace must not classify as orphaned")
 	}
 }
+
+// TestAcquire_SkipsMarkerlessSlot pins the fail-closed contract for damaged
+// slots: a pool entry whose .git/.jj marker is gone must never be admitted to
+// reuse. Dispatching on a markerless path falls back to the configured
+// backend, which in an in-project pool resolves the repository ENCLOSING the
+// pool, so the safety checks would vouch for that repository and the reset
+// would rewrite it - deleting untracked files or moving its checkout.
+func TestAcquire_SkipsMarkerlessSlot(t *testing.T) {
+	repoDir, _ := setupRepo(t)
+	poolDir := filepath.Join(repoDir, "pool") // in-project pool root
+
+	wtPath, err := Acquire(repoDir, poolDir, 2, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	clearOwnerReservation(t, poolDir, wtPath)
+
+	// Damage the slot: its .git marker disappears.
+	if err := os.Remove(filepath.Join(wtPath, ".git")); err != nil {
+		t.Fatalf("removing the slot marker: %v", err)
+	}
+	// Untracked work in the enclosing repository that a misdirected reset
+	// would delete, and the checkout position it would move.
+	precious := filepath.Join(repoDir, "untracked.txt")
+	if err := os.WriteFile(precious, []byte("precious\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	headBefore := gitOut(t, repoDir, "rev-parse", "HEAD")
+
+	second, err := Acquire(repoDir, poolDir, 2, nil)
+	if err != nil {
+		t.Fatalf("Acquire should create a fresh slot instead: %v", err)
+	}
+	if second == wtPath {
+		t.Fatal("acquire admitted a markerless slot to reuse")
+	}
+	if _, err := os.Stat(precious); err != nil {
+		t.Fatalf("untracked file in the enclosing repository must survive: %v", err)
+	}
+	if headAfter := gitOut(t, repoDir, "rev-parse", "HEAD"); headAfter != headBefore {
+		t.Fatalf("enclosing repository checkout moved: %s -> %s", headBefore, headAfter)
+	}
+}
