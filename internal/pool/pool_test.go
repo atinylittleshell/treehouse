@@ -885,7 +885,7 @@ func TestExecuteDestroy_ReclassifiesBeforeReservation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadState failed: %v", err)
 	}
-	planned := classifyForDestroy(state.Worktrees[0], defaultRef)
+	planned := classifyForDestroy(state.Worktrees[0], repoDir, defaultRef)
 	measureDestroySize(&planned)
 
 	scratch := filepath.Join(wtPath, "raced-wip.txt")
@@ -928,7 +928,7 @@ func TestExecuteDestroy_KeepsStateWhenRemovalFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadState failed: %v", err)
 	}
-	planned := classifyForDestroy(state.Worktrees[0], defaultRef)
+	planned := classifyForDestroy(state.Worktrees[0], repoDir, defaultRef)
 	measureDestroySize(&planned)
 
 	badRepoRoot := filepath.Join(t.TempDir(), "not-a-repo")
@@ -973,7 +973,7 @@ func TestExecuteDestroy_ReResolvesRepoRootWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadState failed: %v", err)
 	}
-	planned := classifyForDestroy(state.Worktrees[0], defaultRef)
+	planned := classifyForDestroy(state.Worktrees[0], repoDir, defaultRef)
 	measureDestroySize(&planned)
 
 	destroyed, skipped, err := executeDestroy(poolDir, []DestroyTarget{planned}, "", defaultRef, true, DestroyOptions{})
@@ -1023,7 +1023,7 @@ func TestExecuteDestroy_RemovalFailureRestoresOriginalOwnerReservation(t *testin
 	if original.OwnerPID == 0 || original.OwnerStartedAt == 0 {
 		t.Fatalf("expected acquired worktree to have owner reservation, got %#v", original)
 	}
-	planned := classifyForDestroy(original, defaultRef)
+	planned := classifyForDestroy(original, repoDir, defaultRef)
 	measureDestroySize(&planned)
 
 	badRepoRoot := filepath.Join(t.TempDir(), "not-a-repo")
@@ -2471,6 +2471,24 @@ func TestBackingRepositoryMissingJJ(t *testing.T) {
 	}
 	if !strings.Contains(detail, "jj store") {
 		t.Fatalf("detail should name the jj store, got %q", detail)
+	}
+
+	// A jj slot with a corrupt (empty) store pointer cannot classify as an
+	// orphan, and the diagnostic must name the jj pointer problem rather than
+	// the absent .git entry.
+	corrupt := filepath.Join(base, "corrupt")
+	if err := os.MkdirAll(filepath.Join(corrupt, ".jj"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(corrupt, ".jj", "repo"), []byte("\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missing, detail = backingRepositoryMissing(corrupt)
+	if missing {
+		t.Fatal("a corrupt pointer must not classify as orphaned")
+	}
+	if !strings.Contains(detail, filepath.Join(".jj", "repo")) {
+		t.Fatalf("detail should name the jj store pointer, got %q", detail)
 	}
 
 	// A main workspace (.jj/repo is the store directory itself) is not a

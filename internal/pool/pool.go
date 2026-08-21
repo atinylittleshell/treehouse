@@ -314,11 +314,7 @@ func ValidateReleasePreconditions(poolDir, worktreePath string, preconditions Re
 // callback is invoked only after all preconditions match and runs under that
 // lock so caller-side termination or detachment cannot race a later acquisition.
 func ReleaseConditional(poolDir, worktreePath string, preconditions ReleasePreconditions, beforeReset func() error) error {
-	repoRoot, err := vcs.FindRepoRootFrom(worktreePath)
-	if err != nil {
-		return err
-	}
-	branch, err := vcs.GetDefaultBranch(repoRoot)
+	branch, err := vcs.DefaultBranchForWorktree(worktreePath)
 	if err != nil {
 		return err
 	}

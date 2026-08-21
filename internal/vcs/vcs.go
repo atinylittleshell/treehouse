@@ -351,6 +351,29 @@ func DefaultBranchMergeRef(repoRoot string) (string, error) {
 	return backendFor(repoRoot).DefaultBranchMergeRef(repoRoot)
 }
 
+// DefaultBranchMergeRefForWorktree returns the merge ref in the vocabulary of
+// the worktree's own backend, resolved against repoRoot. A slot of the other
+// flavor came from an era when its backend worked against this repository, so
+// that backend can still name the ref merge-safety checks should compare
+// against; the configured backend's ref never parses for it.
+func DefaultBranchMergeRefForWorktree(worktreePath, repoRoot string) (string, error) {
+	return backendForWorktree(worktreePath).DefaultBranchMergeRef(repoRoot)
+}
+
+// DefaultBranchForWorktree returns the default branch of the repository that
+// owns worktreePath, with both the root discovery and the branch lookup
+// resolved by the worktree's own backend (the same dispatch as ResetWorktree
+// and friends), so a pooled slot can always be released even when the opt-in
+// that created it is no longer visible.
+func DefaultBranchForWorktree(worktreePath string) (string, error) {
+	b := backendForWorktree(worktreePath)
+	repoRoot, err := b.FindRepoRootFrom(worktreePath)
+	if err != nil {
+		return "", err
+	}
+	return b.GetDefaultBranch(repoRoot)
+}
+
 // IsHeadMergedIntoRef reports whether the worktree's current head is merged
 // into ref.
 func IsHeadMergedIntoRef(worktreePath, ref string) (bool, error) {

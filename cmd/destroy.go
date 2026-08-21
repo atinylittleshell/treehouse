@@ -283,16 +283,40 @@ func destroySkipHint(s pool.DestroySkip) string {
 	if s.LeasedBulk {
 		return "leased: name the exact path with " + pool.IncludeLeasedFlag + " (never removed by --all)"
 	}
-	if len(s.NeededFlags) > 0 {
-		return "re-run with " + strings.Join(s.NeededFlags, " ") + " to include"
+	flags := s.NeededFlags
+	if len(flags) == 0 && s.NeededFlag != "" {
+		flags = []string{s.NeededFlag}
 	}
-	if s.NeededFlag != "" {
-		return "re-run with " + s.NeededFlag + " to include"
+	if len(flags) > 0 {
+		if unverifiedOtherFlavor(s.Target) {
+			return "unverified " + s.Target.Flavor + "-flavored worktree: re-run with " + strings.Join(flags, " ") + " to destroy it and migrate the pool"
+		}
+		return "re-run with " + strings.Join(flags, " ") + " to include"
 	}
 	if s.Target.Detail != "" {
 		return s.Target.Detail
 	}
 	return "left in place"
+}
+
+// unverifiedOtherFlavor reports an other-flavor worktree whose only unlanded
+// class is unverified: nothing proved its work is unlanded, verification in
+// its own backend just failed, so the honest framing for the opt-in flag is
+// pool migration rather than discarding unlanded work.
+func unverifiedOtherFlavor(t pool.DestroyTarget) bool {
+	if !t.OtherFlavor {
+		return false
+	}
+	unverified := false
+	for _, class := range t.Classes {
+		switch class {
+		case pool.DestroyUnverified:
+			unverified = true
+		case pool.DestroyDirty, pool.DestroyUnmerged:
+			return false
+		}
+	}
+	return unverified
 }
 
 func destroyTag(t pool.DestroyTarget) string {
