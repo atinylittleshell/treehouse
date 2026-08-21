@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.1](https://github.com/kunchenguid/treehouse/compare/v2.2.0...v2.2.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **return:** refuse to reset a worktree that still has live writers ([#103](https://github.com/kunchenguid/treehouse/issues/103)) ([978da87](https://github.com/kunchenguid/treehouse/commit/978da8750da4f6faebbef90ccdb23aaac6211118))
+
 ## [2.2.0](https://github.com/kunchenguid/treehouse/compare/v2.1.1...v2.2.0) (2026-08-19)
 
 
