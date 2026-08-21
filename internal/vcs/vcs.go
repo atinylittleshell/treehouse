@@ -325,17 +325,39 @@ func backendForRemoval(repoRoot, path string) Backend {
 	return backendFor(repoRoot)
 }
 
+// destructiveBackendForWorktree dispatches the operations that rewrite a
+// worktree's checkout (reset, detach). Unlike backendForWorktree it refuses a
+// path holding no .git or .jj marker instead of falling back to the
+// configured backend, which in an in-project pool would resolve — and rewrite
+// — the repository ENCLOSING the pool. Callers guard markerless slots first;
+// this refusal is defense in depth. Pool slots are the only callers of these
+// operations, so ordinary directories are unaffected.
+func destructiveBackendForWorktree(path string) (Backend, error) {
+	if b := slotMarkerBackend(path); b != nil {
+		return b, nil
+	}
+	return nil, fmt.Errorf("refusing to modify %s: it holds no .git or .jj marker", path)
+}
+
 // Fetch updates refs from origin when an origin remote exists.
 func Fetch(repoRoot string) error { return backendFor(repoRoot).Fetch(repoRoot) }
 
 // ResetWorktree returns a worktree to a pristine checkout of branch.
 func ResetWorktree(worktreePath, branch string) error {
-	return backendForWorktree(worktreePath).ResetWorktree(worktreePath, branch)
+	b, err := destructiveBackendForWorktree(worktreePath)
+	if err != nil {
+		return err
+	}
+	return b.ResetWorktree(worktreePath, branch)
 }
 
 // ResetWorktreeToRef resets worktreePath to an already resolved commit.
 func ResetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean bool) error {
-	return backendForWorktree(worktreePath).ResetWorktreeToRef(worktreePath, ref, expectedHead, requireClean)
+	b, err := destructiveBackendForWorktree(worktreePath)
+	if err != nil {
+		return err
+	}
+	return b.ResetWorktreeToRef(worktreePath, ref, expectedHead, requireClean)
 }
 
 // IsWorktreeSafeToReset reports whether worktreePath can be reset to branch
@@ -347,7 +369,11 @@ func IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, string, e
 
 // DetachWorktree releases any branch the worktree has checked out.
 func DetachWorktree(worktreePath string) error {
-	return backendForWorktree(worktreePath).DetachWorktree(worktreePath)
+	b, err := destructiveBackendForWorktree(worktreePath)
+	if err != nil {
+		return err
+	}
+	return b.DetachWorktree(worktreePath)
 }
 
 // DefaultBranchMergeRef returns the fully qualified ref merge-safety checks

@@ -461,3 +461,59 @@ func TestUnrecognizedVCSValueWarnsOnceAndDefaults(t *testing.T) {
 		t.Fatalf("warning must appear exactly once across repeated selection, got %q", warning)
 	}
 }
+
+// TestDestructiveWrappersRefuseMarkerlessPath pins the defense-in-depth
+// boundary: ResetWorktree, ResetWorktreeToRef, and DetachWorktree refuse a
+// path holding no .git or .jj marker instead of dispatching through the
+// configured backend, which inside a repository would rewrite the enclosing
+// checkout.
+func TestDestructiveWrappersRefuseMarkerlessPath(t *testing.T) {
+	isolateUserConfig(t)
+	repo := t.TempDir()
+	mustRun(t, repo, "git", "init", "--initial-branch=main")
+	mustRun(t, repo, "git", "config", "user.email", "test@test.com")
+	mustRun(t, repo, "git", "config", "user.name", "Test")
+	tracked := filepath.Join(repo, "tracked.txt")
+	if err := os.WriteFile(tracked, []byte("committed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, repo, "git", "add", ".")
+	mustRun(t, repo, "git", "commit", "-m", "initial")
+	if err := os.WriteFile(tracked, []byte("uncommitted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	slot := filepath.Join(repo, "pool", "1", "slot")
+	if err := os.MkdirAll(slot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := []struct {
+		name string
+		call func() error
+	}{
+		{"ResetWorktree", func() error { return ResetWorktree(slot, "main") }},
+		{"ResetWorktreeToRef", func() error { return ResetWorktreeToRef(slot, "main", "", true) }},
+		{"DetachWorktree", func() error { return DetachWorktree(slot) }},
+	}
+	for _, c := range calls {
+		err := c.call()
+		if err == nil {
+			t.Fatalf("%s must refuse a markerless path", c.name)
+		}
+		if !strings.Contains(err.Error(), "no .git or .jj marker") {
+			t.Fatalf("%s error should name the missing marker, got %v", c.name, err)
+		}
+	}
+
+	data, err := os.ReadFile(tracked)
+	if err != nil || string(data) != "uncommitted\n" {
+		t.Fatalf("enclosing repository's uncommitted change must survive: %q, %v", data, err)
+	}
+	out, err := exec.Command("git", "-C", repo, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref := strings.TrimSpace(string(out)); ref != "main" {
+		t.Fatalf("enclosing repository HEAD moved off main to %q", ref)
+	}
+}

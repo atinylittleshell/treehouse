@@ -20,6 +20,7 @@ const (
 	StatusInUse     = "in-use"
 	StatusLeased    = "leased"
 	StatusHere      = "you're here"
+	StatusDamaged   = "damaged"
 )
 
 // WorktreeStatus describes one managed worktree as reported by List.
@@ -404,6 +405,10 @@ func validateReleasePreconditions(wt WorktreeEntry, preconditions ReleasePrecond
 
 // List returns the current status of managed worktrees in poolDir.
 // Leased worktrees are reported with StatusLeased and their optional holder.
+// An idle slot whose .git/.jj marker is gone is reported StatusDamaged: its
+// dirtiness is never read, because dispatch on a markerless path falls back to
+// the configured backend, which in an in-project pool answers with the facts
+// of the repository ENCLOSING the pool.
 func List(poolDir string) ([]WorktreeStatus, error) {
 	var result []WorktreeStatus
 
@@ -446,6 +451,8 @@ func List(poolDir string) ([]WorktreeStatus, error) {
 				if cwdInWorktree(cwd, wt.Path) {
 					ws.Status = StatusHere
 				}
+			} else if ws.Flavor == "" {
+				ws.Status = StatusDamaged
 			} else if dirty, _ := vcs.IsDirty(wt.Path); dirty {
 				ws.Status = StatusDirty
 			}

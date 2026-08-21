@@ -90,6 +90,8 @@ var statusCmd = &cobra.Command{
 				status = magenta(wt.Status)
 			case pool.StatusHere:
 				status = cyan(wt.Status)
+			case pool.StatusDamaged:
+				status = red(wt.Status)
 			}
 
 			// "%-4s  %-11s  " = 4 + 2 + 11 + 2 = 19 chars before path
@@ -100,6 +102,9 @@ var statusCmd = &cobra.Command{
 			}
 			if wt.Flavor != "" && wt.Flavor != repoFlavor {
 				line += yellow(fmt.Sprintf("  (%s-flavored; repo selects %s — destroy to migrate)", wt.Flavor, repoFlavor))
+			}
+			if wt.Status == pool.StatusDamaged {
+				line += yellow(fmt.Sprintf("  (no .git or .jj marker — 'treehouse destroy %s --include-unlanded' to remove)", ui.PrettyPath(wt.Path)))
 			}
 			fmt.Fprintln(os.Stdout, line)
 

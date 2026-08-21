@@ -2652,6 +2652,42 @@ func TestDestroyWorktree_MarkerlessSlot(t *testing.T) {
 	}
 }
 
+// TestList_MarkerlessSlotReportsDamaged pins status's side of the contract: an
+// idle slot whose .git/.jj marker is gone is reported with its own damaged
+// status, never with dirtiness read from the repository enclosing an
+// in-project pool (which would label the slot available or dirty from someone
+// else's facts).
+func TestList_MarkerlessSlotReportsDamaged(t *testing.T) {
+	repoDir, _ := setupRepo(t)
+	poolDir := filepath.Join(repoDir, "pool") // in-project pool root
+
+	wtPath, err := Acquire(repoDir, poolDir, 2, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	clearOwnerReservation(t, poolDir, wtPath)
+	if err := os.Remove(filepath.Join(wtPath, ".git")); err != nil {
+		t.Fatalf("removing the slot marker: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "untracked.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	statuses, err := List(poolDir)
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("expected one worktree, got %+v", statuses)
+	}
+	if statuses[0].Status != StatusDamaged {
+		t.Fatalf("expected status %q, got %q", StatusDamaged, statuses[0].Status)
+	}
+	if statuses[0].Flavor != "" {
+		t.Fatalf("expected empty flavor for a markerless slot, got %q", statuses[0].Flavor)
+	}
+}
+
 // TestPrune_MarkerlessSlotSkippedAsCannotVerify pins prune's classification:
 // a slot whose .git/.jj marker is gone is reported as cannot-verify - the
 // enclosing repository's facts must not decide whether it is deletable - and
