@@ -222,7 +222,7 @@ treehouse get --lease --no-fetch --json
 
 With `--no-fetch`, Treehouse resets or creates the worktree from existing local refs and never contacts `origin`. The caller is responsible for ensuring those refs and objects are current.
 
-`treehouse status --json` returns an array with `name`, `path`, `status`, `lease_id`, `lease_holder`, `leased_at`, and `processes`. Non-leased entries use empty lease strings and a `null` timestamp. State files written before lease identities remain readable; their existing leases have an empty `lease_id` until released and acquired again.
+`treehouse status --json` returns an array with `name`, `path`, `status`, `flavor`, `lease_id`, `lease_holder`, `leased_at`, and `processes`. `flavor` is the backend the worktree's own marker identifies (`"git"` or `"jj"`) and is omitted when no marker is found. Non-leased entries use empty lease strings and a `null` timestamp. State files written before lease identities remain readable; their existing leases have an empty `lease_id` until released and acquired again.
 
 Release a lease with `treehouse return <path>`, which terminates lingering processes and verifies that no foreign process remains before it resets the worktree, clears the lease, and returns the worktree to the pool.
 If process termination or that verification fails, the command exits nonzero and leaves the worktree and lease in place instead of recycling a slot that may still be in use.
@@ -350,6 +350,7 @@ In a jj repository, pooled worktrees are [jj workspaces](https://jj-vcs.github.i
 Git is the default backend everywhere, including in colocated repositories (both `.jj` and `.git`) and `.jj`-only repositories.
 Opt in to the jj backend with `vcs = "jj"`, resolved in this precedence (highest first): the `TREEHOUSE_VCS` environment variable, the repo-level `treehouse.toml`, the user-level `~/.config/treehouse/config.toml`.
 The jj opt-in only applies where a `.jj` directory actually exists; in a plain git repository it is silently ignored and git is used, so a shell-wide `TREEHOUSE_VCS=jj` never breaks git-only repositories.
+A `vcs` value other than `"git"` or `"jj"` (e.g. `"Jujutsu"`) is ignored the same way, but warns once on stderr naming the value and where it came from, so a typo keeps commands working without silently leaving you on the wrong backend.
 Pooled jj workspaces inherit the opt-in from their main repository root, so an untracked `treehouse.toml` there is enough.
 
 The backend is resolved on every command, and existing pool slots keep the flavor they were created with: changing the opt-in does not convert worktrees already in the pool.
@@ -364,7 +365,7 @@ jj-backend notes:
 - Resets abandon only the working-copy commit and are recoverable with `jj op restore`.
 - Merge detection uses ancestry; squash-merged work is treated as unmerged, so lifecycle commands err on the side of keeping it.
 - The default branch resolves to the `main`/`master`/`trunk` bookmark, preferring origin.
-- Known limitation: a pooled jj workspace whose backing repository was deleted is not classified as an orphan; it is skipped as unverified and never auto-reclaimed by `prune --prune-orphans`. Reclaim it with `treehouse destroy`.
+- A pooled jj workspace whose backing repository was deleted is classified as an orphan just like a git worktree: `prune` reports it, and `prune --prune-orphans --yes` reclaims it.
 
 ### Worktree root
 
