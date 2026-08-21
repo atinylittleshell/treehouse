@@ -2438,3 +2438,51 @@ func quoteForShell(p string) string {
 	// Double-quote works in both sh and cmd.exe for paths without quotes.
 	return `"` + p + `"`
 }
+
+// TestBackingRepositoryMissingJJ mirrors the git orphan detection for jj
+// slots: a pooled workspace whose .jj/repo pointer names a deleted store
+// must classify as orphaned, and one whose store exists must not. Pure file
+// fixtures: no jj binary required.
+func TestBackingRepositoryMissingJJ(t *testing.T) {
+	base := t.TempDir()
+	store := filepath.Join(base, "repo", ".jj", "repo")
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	slot := filepath.Join(base, "slot")
+	if err := os.MkdirAll(filepath.Join(slot, ".jj"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pointer := filepath.Join(slot, ".jj", "repo")
+	if err := os.WriteFile(pointer, []byte(store+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if missing, detail := backingRepositoryMissing(slot); missing {
+		t.Fatalf("store exists; expected not orphaned, got %q", detail)
+	}
+
+	if err := os.RemoveAll(filepath.Join(base, "repo")); err != nil {
+		t.Fatal(err)
+	}
+	missing, detail := backingRepositoryMissing(slot)
+	if !missing {
+		t.Fatal("store deleted; expected the slot to classify as orphaned")
+	}
+	if !strings.Contains(detail, "jj store") {
+		t.Fatalf("detail should name the jj store, got %q", detail)
+	}
+
+	// A main workspace (.jj/repo is the store directory itself) is not a
+	// linked worktree and must never classify as orphaned.
+	if missing, _ := backingRepositoryMissing(filepath.Join(base, "mainws")); missing {
+		t.Fatal("nonexistent path must not classify as orphaned")
+	}
+	mainws := filepath.Join(base, "mainws", ".jj", "repo")
+	if err := os.MkdirAll(mainws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if missing, _ := backingRepositoryMissing(filepath.Join(base, "mainws")); missing {
+		t.Fatal("a main workspace must not classify as orphaned")
+	}
+}

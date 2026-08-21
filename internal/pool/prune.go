@@ -731,17 +731,54 @@ func newPruneSkipped(name, path, category, reason, detail string) PruneSkipped {
 }
 
 func backingRepositoryMissing(worktreePath string) (bool, string) {
-	gitDir, ok, detail := linkedWorktreeGitDir(worktreePath)
-	if !ok {
+	if gitDir, ok, detail := linkedWorktreeGitDir(worktreePath); ok {
+		return pointerTargetMissing(gitDir, "gitdir")
+	} else if storePath, jok, _ := jjWorkspaceStorePointer(worktreePath); jok {
+		return pointerTargetMissing(storePath, "jj store")
+	} else {
 		return false, detail
 	}
-	if _, err := os.Stat(gitDir); err == nil {
+}
+
+// pointerTargetMissing reports whether the backing path a worktree points at
+// is gone, in a form both backends share.
+func pointerTargetMissing(target, kind string) (bool, string) {
+	if _, err := os.Stat(target); err == nil {
 		return false, ""
 	} else if os.IsNotExist(err) {
-		return true, fmt.Sprintf("gitdir %s does not exist", gitDir)
+		return true, fmt.Sprintf("%s %s does not exist", kind, target)
 	} else {
-		return false, fmt.Sprintf("cannot inspect gitdir %s: %v", gitDir, err)
+		return false, fmt.Sprintf("cannot inspect %s %s: %v", kind, target, err)
 	}
+}
+
+// jjWorkspaceStorePointer resolves a pooled jj workspace's .jj/repo pointer
+// file to the backing store path it names, mirroring linkedWorktreeGitDir
+// for the jj shape so a workspace whose backing repository was deleted can
+// classify as an orphan instead of an unverifiable skip forever. A .jj/repo
+// DIRECTORY means the store lives here (a main workspace, not a pooled
+// slot), which is not a linked worktree.
+func jjWorkspaceStorePointer(worktreePath string) (string, bool, string) {
+	repoPath := filepath.Join(worktreePath, ".jj", "repo")
+	info, err := os.Stat(repoPath)
+	if err != nil {
+		return "", false, err.Error()
+	}
+	if info.IsDir() {
+		return "", false, ""
+	}
+	data, err := os.ReadFile(repoPath)
+	if err != nil {
+		return "", false, err.Error()
+	}
+	storePath := strings.TrimSpace(string(data))
+	if storePath == "" {
+		return "", false, fmt.Sprintf("%s has an empty store pointer", repoPath)
+	}
+	if !filepath.IsAbs(storePath) {
+		storePath = filepath.Join(worktreePath, ".jj", storePath)
+	}
+	return filepath.Clean(storePath), true, ""
 }
 
 func linkedWorktreeGitDir(worktreePath string) (string, bool, string) {
