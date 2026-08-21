@@ -561,3 +561,20 @@ func runJJ(dir string, args ...string) (string, error) {
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+
+// IsOriginAccessError reports whether err reads like a failure to reach or
+// use the origin remote, in jj's vocabulary. jj shells out to git for
+// network transport, so its errors wrap git's ("External git program
+// failed" around "unable to access"/"Could not resolve host"); local-path
+// remotes fail with jj's own "Could not find repository at". Patterns
+// captured from real jj git fetch runs against unreachable remotes.
+func IsOriginAccessError(err error) bool {
+	if err == nil {
+		return false
+	}
+	detail := err.Error()
+	return strings.Contains(detail, "External git program failed") ||
+		strings.Contains(detail, "unable to access") ||
+		strings.Contains(detail, "Could not resolve host") ||
+		strings.Contains(detail, "Could not find repository at")
+}

@@ -368,3 +368,11 @@ func ShortHash(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return fmt.Sprintf("%x", h[:3])
 }
+
+// IsOriginAccessError reports whether err reads like a failure to reach or
+// use the origin remote. Classification is by the error's content, not the
+// configured backend: the error already happened in whichever backend
+// produced it, and each backend owns its own vocabulary.
+func IsOriginAccessError(err error) bool {
+	return gitvcs.IsOriginAccessError(err) || jjvcs.IsOriginAccessError(err)
+}

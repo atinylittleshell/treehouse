@@ -329,7 +329,7 @@ func resolvePruneDefaultRef(repoRoot string) (string, error) {
 	if err != nil {
 		category := pruneSkipCannotVerify
 		reason := "cannot resolve default branch"
-		if vcs.HasRemote(repoRoot, "origin") && isOriginAccessError(err) {
+		if vcs.HasRemote(repoRoot, "origin") && vcs.IsOriginAccessError(err) {
 			category = PruneSkipOriginUnreachable
 			reason = "cannot resolve origin default branch"
 		} else if vcs.HasRemote(repoRoot, "origin") {
@@ -704,14 +704,6 @@ func skippedFromVerificationError(name, path string, err error) PruneSkipped {
 		return newPruneSkipped(name, path, pruneErr.Category, pruneErr.Reason, pruneErr.Detail)
 	}
 	return newPruneSkipped(name, path, pruneSkipCannotVerify, "cannot verify worktree", err.Error())
-}
-
-func isOriginAccessError(err error) bool {
-	detail := err.Error()
-	return strings.Contains(detail, "git ls-remote") ||
-		strings.Contains(detail, "Could not read from remote repository") ||
-		strings.Contains(detail, "does not appear to be a git repository") ||
-		strings.Contains(detail, "repository") && strings.Contains(detail, "not found")
 }
 
 func newPruneSkipped(name, path, category, reason, detail string) PruneSkipped {

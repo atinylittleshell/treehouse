@@ -603,3 +603,18 @@ func (*Backend) IsHeadMergedIntoRef(worktreePath, ref string) (bool, error) {
 	return IsHeadMergedIntoRef(worktreePath, ref)
 }
 func (*Backend) IsDirty(worktreePath string) (bool, error) { return IsDirty(worktreePath) }
+
+// IsOriginAccessError reports whether err reads like a failure to reach or
+// use the origin remote, in git's own vocabulary. The patterns lived in the
+// pool package before backends existed; they are owned here now so pool code
+// never string-matches one backend's errors.
+func IsOriginAccessError(err error) bool {
+	if err == nil {
+		return false
+	}
+	detail := err.Error()
+	return strings.Contains(detail, "git ls-remote") ||
+		strings.Contains(detail, "Could not read from remote repository") ||
+		strings.Contains(detail, "does not appear to be a git repository") ||
+		strings.Contains(detail, "repository") && strings.Contains(detail, "not found")
+}

@@ -1,6 +1,7 @@
 package jjvcs
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -536,5 +537,29 @@ func TestSymlinkedRepoPathResolvesOneRootIdentity(t *testing.T) {
 	}
 	if fromWorkspace != want {
 		t.Fatalf("workspace route: got %q, want physical %q", fromWorkspace, want)
+	}
+}
+
+// TestIsOriginAccessErrorJJ pins jj's unreachable-origin vocabulary, each
+// string captured from a real jj git fetch failure (jj 0.43).
+func TestIsOriginAccessErrorJJ(t *testing.T) {
+	cases := []struct {
+		detail string
+		want   bool
+	}{
+		{"Error: Git process failed: External git program failed:", true},
+		{"fatal: unable to access 'https://x/': Could not resolve host: x", true},
+		{"Error: Could not find repository at '/nonexistent/repo.git'", true},
+		{"Error: Workspace is stale", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		got := IsOriginAccessError(errors.New(c.detail))
+		if got != c.want {
+			t.Errorf("IsOriginAccessError(%q) = %v, want %v", c.detail, got, c.want)
+		}
+	}
+	if IsOriginAccessError(nil) {
+		t.Error("nil error must not classify as an origin access error")
 	}
 }
