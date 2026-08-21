@@ -272,8 +272,8 @@ If `origin` cannot be reached, prune reports `origin unreachable (cannot verify)
 If a linked worktree points at a missing backing repository, prune reports `orphaned (backing repository missing)`.
 Plain `treehouse prune` and `treehouse prune --all` never delete those orphans.
 Pass `--prune-orphans` to include true backing-repository-missing orphans in the dry run, then add `--yes` to delete them.
-Treehouse cannot verify orphan contents after the backing git metadata is gone, so each orphan candidate is marked `content could not be verified`.
-Use `--verbose` to show the underlying git diagnostic details for skipped worktrees.
+Treehouse cannot verify orphan contents after the backing version-control metadata is gone, so each orphan candidate is marked `content could not be verified`.
+Use `--verbose` to show the underlying version-control diagnostic details for skipped worktrees.
 
 ### Destroying worktrees
 

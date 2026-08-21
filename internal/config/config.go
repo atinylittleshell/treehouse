@@ -18,7 +18,9 @@ type Config struct {
 	// (TREEHOUSE_VCS, then the repo-root treehouse.toml, then the
 	// user-level config.toml), and a jj opt-in applies only where a .jj
 	// directory actually exists. Pooled jj workspaces inherit the opt-in
-	// from their main repository root.
+	// from their main repository root. An unrecognized value is ignored
+	// (git stays the default) with a one-time stderr warning naming the
+	// value and its source.
 	VCS   string `toml:"vcs,omitempty"`
 	Hooks Hooks  `toml:"hooks,omitempty"`
 }

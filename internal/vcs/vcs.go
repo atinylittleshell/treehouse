@@ -15,6 +15,11 @@
 // an untracked config file, so they inherit the opt-in from their main
 // repository root, located by reading the .jj/repo pointer — file
 // inspection only; the decision still comes from explicit configuration.
+//
+// Operations on an existing worktree dispatch on the slot's own marker (a
+// .git entry or a .jj directory; see backendForWorktree), so the configured
+// backend never answers for a slot of the other flavor. Worktree creation
+// and paths without a marker still follow the configured backend.
 package vcs
 
 import (
