@@ -106,7 +106,10 @@ func confirmWorktreeReturn(wtPath string) error {
 }
 
 func finalizeWorktreeReturn(wtPath string) error {
-	if !returnForce {
+	// A markerless slot must never be detached: dispatch on such a path falls
+	// back to the configured backend, which in an in-project pool would detach
+	// the HEAD of the repository ENCLOSING the pool.
+	if !returnForce && vcs.WorktreeBackendName(wtPath) != "" {
 		if err := vcs.DetachWorktree(wtPath); err != nil {
 			return fmt.Errorf("failed to detach worktree HEAD: %w", err)
 		}

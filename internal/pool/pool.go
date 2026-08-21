@@ -156,8 +156,10 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 				// configured backend, which in an in-project pool resolves
 				// the repository ENCLOSING the pool - the safety checks
 				// would vouch for that repository and the reset would
-				// rewrite it. Fail closed and leave the slot for destroy
-				// and prune, whose paths never reset it.
+				// rewrite it. Fail closed and leave the slot for destroy,
+				// which classifies it unverified and removes it only with
+				// --include-unlanded; prune skips it as unverifiable and
+				// neither path ever resets it.
 				continue
 			}
 			if flavor != wantFlavor {
@@ -324,10 +326,20 @@ func ValidateReleasePreconditions(poolDir, worktreePath string, preconditions Re
 // the worktree, and clears its reservation while holding one state lock. The
 // callback is invoked only after all preconditions match and runs under that
 // lock so caller-side termination or detachment cannot race a later acquisition.
+// A markerless slot (its .git/.jj marker is gone) is never reset or asked for a
+// branch: dispatch on such a path falls back to the configured backend, which
+// in an in-project pool resolves the repository ENCLOSING the pool. Its
+// reservation is still cleared so the slot is not stuck leased, and the damaged
+// slot is left for destroy; acquire refuses to reuse it.
 func ReleaseConditional(poolDir, worktreePath string, preconditions ReleasePreconditions, beforeReset func() error) error {
-	branch, err := vcs.DefaultBranchForWorktree(worktreePath)
-	if err != nil {
-		return err
+	markerless := vcs.WorktreeBackendName(worktreePath) == ""
+	branch := ""
+	if !markerless {
+		resolved, err := vcs.DefaultBranchForWorktree(worktreePath)
+		if err != nil {
+			return err
+		}
+		branch = resolved
 	}
 	return WithStateLock(poolDir, func() error {
 		state, err := ReadState(poolDir)
@@ -344,8 +356,10 @@ func ReleaseConditional(poolDir, worktreePath string, preconditions ReleasePreco
 				return err
 			}
 		}
-		if err := vcs.ResetWorktree(worktreePath, branch); err != nil {
-			return err
+		if !markerless {
+			if err := vcs.ResetWorktree(worktreePath, branch); err != nil {
+				return err
+			}
 		}
 
 		wt.OwnerPID = 0

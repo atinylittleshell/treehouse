@@ -290,6 +290,15 @@ func classifyForDestroy(wt WorktreeEntry, repoRoot, defaultRef string) DestroyTa
 		target.addClass(DestroyInUse, "cannot check processes: "+procErr.Error())
 	}
 
+	// A markerless slot (its .git/.jj marker is gone) must never have its
+	// facts read through the configured-backend fallback: in an in-project
+	// pool that resolves the repository ENCLOSING the pool, and a clean
+	// enclosing repository would label the damaged slot disposable.
+	if target.Flavor == "" {
+		target.addClass(DestroyUnverified, "no .git or .jj marker: contents cannot be verified")
+		return finalizeDestroyTarget(target)
+	}
+
 	if orphaned, detail := backingRepositoryMissing(wt.Path); orphaned {
 		target.addClass(DestroyUnverified, "backing repository missing: "+detail)
 		return finalizeDestroyTarget(target)
@@ -531,7 +540,19 @@ func restoreOriginalOwnerReservation(wt *WorktreeEntry, reservation destroyReser
 // unverified worktrees once the caller has opted in.
 func removeManagedWorktree(repoRoot, path string) error {
 	orphaned, _ := backingRepositoryMissing(path)
+	// A markerless slot (directory present, .git/.jj marker gone) has no live
+	// VCS registration either backend will deregister - git refuses to remove
+	// a worktree whose .git file is missing - so it takes the plain-directory
+	// route. The stale registration self-heals at the next add: git via
+	// `git worktree prune`, jj by forgetting a stale same-path workspace
+	// registration.
+	markerless := false
 	if !orphaned {
+		if _, err := os.Stat(path); err == nil {
+			markerless = vcs.WorktreeBackendName(path) == ""
+		}
+	}
+	if !orphaned && !markerless {
 		removeRepoRoot := repoRoot
 		if removeRepoRoot == "" {
 			resolvedRoot, err := vcs.FindMainRepoRootFrom(path)
