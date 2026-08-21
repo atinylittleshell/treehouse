@@ -2548,6 +2548,48 @@ func TestAcquire_SkipsMarkerlessSlot(t *testing.T) {
 	}
 }
 
+// TestAcquire_MarkerlessSlotSelfIgnoringPool reproduces the reviewed failure
+// exactly as production reaches it. `treehouse get` writes a self-ignoring
+// .gitignore into the pool root, so the enclosing repository reports itself
+// clean and the fallback dirty check cannot accidentally shield the damaged
+// slot. Before the fail-closed guard, acquire admitted the markerless slot to
+// reuse and ResetWorktreeToRef committed a raw commit ID onto the enclosing
+// repository's HEAD, detaching its checkout off the default branch.
+func TestAcquire_MarkerlessSlotSelfIgnoringPool(t *testing.T) {
+	repoDir, _ := setupRepo(t)
+	poolDir := filepath.Join(repoDir, "pool") // in-project pool root
+	if err := os.MkdirAll(poolDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(poolDir, ".gitignore"), []byte("*\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wtPath, err := Acquire(repoDir, poolDir, 2, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	clearOwnerReservation(t, poolDir, wtPath)
+	if err := os.Remove(filepath.Join(wtPath, ".git")); err != nil {
+		t.Fatalf("removing the slot marker: %v", err)
+	}
+	headBefore := gitOut(t, repoDir, "rev-parse", "HEAD")
+
+	second, err := Acquire(repoDir, poolDir, 2, nil)
+	if err != nil {
+		t.Fatalf("Acquire should create a fresh slot instead: %v", err)
+	}
+	if second == wtPath {
+		t.Fatal("acquire admitted a markerless slot to reuse")
+	}
+	if headAfter := gitOut(t, repoDir, "rev-parse", "HEAD"); headAfter != headBefore {
+		t.Fatalf("enclosing repository checkout moved: %s -> %s", headBefore, headAfter)
+	}
+	if ref := gitOut(t, repoDir, "rev-parse", "--abbrev-ref", "HEAD"); ref != "main" {
+		t.Fatalf("enclosing repository HEAD detached off main to %q", ref)
+	}
+}
+
 // TestRelease_MarkerlessSlotClearsLeaseWithoutReset pins the release side of
 // the same contract: returning a slot whose .git/.jj marker is gone must clear
 // its lease without dispatching branch discovery or a reset, which would fall
