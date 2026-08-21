@@ -161,20 +161,29 @@ func runGate(t *testing.T, step gateStep, event pullRequestEvent) (bool, string)
 }
 
 const (
-	noMistakesBody = "## Pipeline\n\nUpdates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)\n"
-	releaseBody    = ":robot: I have created a release *beep* *boop*\n---\n\n## [2.1.1](https://example.invalid)\n\n---\n" +
+	noMistakesSignature = "## Pipeline\n\nUpdates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)\n"
+	// completedAttestation matches the compact v1 comment no-mistakes >= 1.46.0 writes.
+	// pr/ci are commonly still running/pending at PR write time and are not required.
+	completedAttestation = `<!-- no-mistakes-pipeline-attestation:v1 {"head_sha":"0123456789abcdef0123456789abcdef01234567","steps":[{"step":"intent","status":"completed"},{"step":"rebase","status":"completed"},{"step":"review","status":"completed"},{"step":"test","status":"completed"},{"step":"document","status":"completed"},{"step":"lint","status":"completed"},{"step":"push","status":"completed"},{"step":"pr","status":"running"},{"step":"ci","status":"pending"}]} -->`
+	noMistakesBody       = noMistakesSignature + "\n" + completedAttestation + "\n"
+	releaseBody          = ":robot: I have created a release *beep* *boop*\n---\n\n## [2.1.1](https://example.invalid)\n\n---\n" +
 		"This PR was generated with [Release Please](https://github.com/googleapis/release-please). See [documentation](https://github.com/googleapis/release-please#release-please)."
 	repo     = "kunchenguid/treehouse"
 	forkRepo = "someone-else/treehouse"
+
+	attestationVersionFloor = "no-mistakes >= 1.46.0"
+	attestationVersionURL   = "https://github.com/kunchenguid/no-mistakes/pull/670"
 )
 
 func TestNoMistakesGateDecisions(t *testing.T) {
 	step := loadGateStep(t)
 
 	cases := []struct {
-		name  string
-		event pullRequestEvent
-		pass  bool
+		name       string
+		event      pullRequestEvent
+		pass       bool
+		wantOutput []string
+		hideOutput []string
 	}{
 		{
 			// The live shape of treehouse's own release PRs (see PR #78).
@@ -220,12 +229,100 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 			pass: true,
 		},
 		{
-			name: "human PR carrying the no-mistakes signature passes",
+			name: "github-actions bot remains exempt even with a signature-only body",
+			event: pullRequestEvent{
+				number: 96, body: noMistakesSignature, author: "github-actions[bot]",
+				headRef: "chore/bot-with-signature", headRepo: repo, baseRepo: repo,
+			},
+			pass: true,
+		},
+		{
+			name: "human PR carrying the no-mistakes signature and completed attestation passes",
 			event: pullRequestEvent{
 				number: 83, body: noMistakesBody, author: "kunchenguid",
 				headRef: "fm/some-work", headRepo: repo, baseRepo: repo,
 			},
 			pass: true,
+		},
+		{
+			name: "human PR with the signature but no attestation fails",
+			event: pullRequestEvent{
+				number: 89, body: noMistakesSignature, author: "kunchenguid",
+				headRef: "fm/old-no-mistakes", headRepo: repo, baseRepo: repo,
+			},
+			pass:       false,
+			wantOutput: []string{attestationVersionFloor, attestationVersionURL, "Older no-mistakes that only writes the signature line is not enough"},
+		},
+		{
+			name: "human PR with unparseable attestation JSON fails",
+			event: pullRequestEvent{
+				number:  90,
+				body:    noMistakesSignature + "\n<!-- no-mistakes-pipeline-attestation:v1 {not-json} -->\n",
+				author:  "kunchenguid",
+				headRef: "fm/bad-attestation", headRepo: repo, baseRepo: repo,
+			},
+			pass:       false,
+			wantOutput: []string{attestationVersionFloor, attestationVersionURL},
+		},
+		{
+			name: "human PR with skipped review fails",
+			event: pullRequestEvent{
+				number:  91,
+				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"step":"review","status":"completed"`, `"step":"review","status":"skipped"`, 1) + "\n",
+				author:  "kunchenguid",
+				headRef: "fm/skipped-review", headRepo: repo, baseRepo: repo,
+			},
+			pass:       false,
+			wantOutput: []string{"review: skipped", "Quota skips and agent skips are not compliant"},
+			hideOutput: []string{attestationVersionFloor},
+		},
+		{
+			name: "human PR with failed test fails",
+			event: pullRequestEvent{
+				number:  92,
+				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"step":"test","status":"completed"`, `"step":"test","status":"failed"`, 1) + "\n",
+				author:  "kunchenguid",
+				headRef: "fm/failed-test", headRepo: repo, baseRepo: repo,
+			},
+			pass:       false,
+			wantOutput: []string{"test: failed"},
+			hideOutput: []string{attestationVersionFloor},
+		},
+		{
+			name: "human PR with pending document fails",
+			event: pullRequestEvent{
+				number:  93,
+				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"step":"document","status":"completed"`, `"step":"document","status":"pending"`, 1) + "\n",
+				author:  "kunchenguid",
+				headRef: "fm/pending-document", headRepo: repo, baseRepo: repo,
+			},
+			pass:       false,
+			wantOutput: []string{"document: pending"},
+			hideOutput: []string{attestationVersionFloor},
+		},
+		{
+			name: "human PR with running document fails",
+			event: pullRequestEvent{
+				number:  94,
+				body:    noMistakesSignature + "\n" + strings.Replace(completedAttestation, `"step":"document","status":"completed"`, `"step":"document","status":"running"`, 1) + "\n",
+				author:  "kunchenguid",
+				headRef: "fm/running-document", headRepo: repo, baseRepo: repo,
+			},
+			pass:       false,
+			wantOutput: []string{"document: running"},
+			hideOutput: []string{attestationVersionFloor},
+		},
+		{
+			name: "human PR missing the document step fails",
+			event: pullRequestEvent{
+				number:  95,
+				body:    noMistakesSignature + "\n<!-- no-mistakes-pipeline-attestation:v1 {\"head_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"steps\":[{\"step\":\"review\",\"status\":\"completed\"},{\"step\":\"test\",\"status\":\"completed\"}]} -->\n",
+				author:  "kunchenguid",
+				headRef: "fm/missing-document", headRepo: repo, baseRepo: repo,
+			},
+			pass:       false,
+			wantOutput: []string{"document: missing"},
+			hideOutput: []string{attestationVersionFloor},
 		},
 		{
 			name: "human PR without the signature fails",
@@ -274,6 +371,16 @@ func TestNoMistakesGateDecisions(t *testing.T) {
 			got, output := runGate(t, step, tc.event)
 			if got != tc.pass {
 				t.Fatalf("gate pass = %v, want %v\n%s", got, tc.pass, output)
+			}
+			for _, want := range tc.wantOutput {
+				if !strings.Contains(output, want) {
+					t.Fatalf("gate output missing %q\n%s", want, output)
+				}
+			}
+			for _, hide := range tc.hideOutput {
+				if strings.Contains(output, hide) {
+					t.Fatalf("gate output unexpectedly contains %q\n%s", hide, output)
+				}
 			}
 		})
 	}
