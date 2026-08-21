@@ -376,3 +376,18 @@ func ShortHash(s string) string {
 func IsOriginAccessError(err error) bool {
 	return gitvcs.IsOriginAccessError(err) || jjvcs.IsOriginAccessError(err)
 }
+
+// BackendNameFor names the backend the repository's configuration selects
+// for path ("git" or "jj"), without performing any operation.
+func BackendNameFor(path string) string { return backendFor(path).Name() }
+
+// WorktreeBackendName names the backend a worktree's own marker identifies
+// ("git" or "jj"), or "" when path holds no marker. This is the flavor a
+// pool slot actually is, as opposed to what the repository currently
+// selects.
+func WorktreeBackendName(path string) string {
+	if b := slotMarkerBackend(path); b != nil {
+		return b.Name()
+	}
+	return ""
+}

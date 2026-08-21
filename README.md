@@ -354,9 +354,8 @@ Pooled jj workspaces inherit the opt-in from their main repository root, so an u
 
 The backend is resolved on every command, and existing pool slots keep the flavor they were created with: changing the opt-in does not convert worktrees already in the pool.
 `destroy` and `prune` handle each slot by its own flavor (its `.git` or `.jj` marker), so a git worktree is still cleanly deregistered from git even after opting the repository into jj, and vice versa.
-`treehouse get`, however, is not yet flavor-aware: it may reset and hand back an existing slot of the old flavor until the pool is migrated, so a repo freshly opted into jj can still serve git worktrees from its old pool.
-To migrate a pool after changing the opt-in, `treehouse destroy` the old slots and re-acquire them with `treehouse get`.
-Acquire-side flavor awareness and first-class mixed git+jj pools are deferred to a follow-up.
+`treehouse get` is flavor-aware too: it only reuses slots matching the backend the repository currently selects, and creates new slots with that backend, so a caller who opted in to jj is never handed a git worktree (or vice versa).
+Old-flavor slots stay in the pool untouched — `treehouse status` marks them and they count toward `max_trees` — until you migrate them: `treehouse destroy` the old slots and re-acquire with `treehouse get`.
 
 jj-backend notes:
 

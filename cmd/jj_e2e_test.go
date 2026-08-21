@@ -209,3 +209,54 @@ func TestJJDirtyWorktreeIsNotHandedOut(t *testing.T) {
 		t.Fatal("expected committed pooled work to survive the worktree reset")
 	}
 }
+
+// TestAcquireIsFlavorAware pins the acquire contract after an opt-in change:
+// a repository freshly opted in to jj must not be handed its old git slot -
+// a worktree where jj commands do not work - and the old slot must survive
+// untouched for the documented destroy-and-reacquire migration.
+func TestAcquireIsFlavorAware(t *testing.T) {
+	requireJJ(t)
+	repoDir, homeDir := setupColocatedRepoWithoutOptIn(t)
+
+	// Day 1: no opt-in - a git slot is created, used, and returned.
+	stdout, stderr, exitCode := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease")
+	if exitCode != 0 {
+		t.Fatalf("get --lease (git): exit %d: %s", exitCode, stderr)
+	}
+	gitSlot := strings.TrimSpace(stdout)
+	if _, err := os.Stat(filepath.Join(gitSlot, ".git")); err != nil {
+		t.Fatalf("expected a git worktree on day 1: %v", err)
+	}
+	if _, _, exitCode = runTreehouse(t, repoDir, homeDir, nil, "return", gitSlot); exitCode != 0 {
+		t.Fatal("returning the git slot failed")
+	}
+
+	// Day 2: the repository opts in to jj. The same command must skip the
+	// available git slot and hand out a new jj workspace.
+	if err := os.WriteFile(filepath.Join(repoDir, "treehouse.toml"), []byte("vcs = \"jj\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, exitCode = runTreehouse(t, repoDir, homeDir, nil, "get", "--lease")
+	if exitCode != 0 {
+		t.Fatalf("get --lease (jj): exit %d: %s", exitCode, stderr)
+	}
+	jjSlot := strings.TrimSpace(stdout)
+	if jjSlot == gitSlot {
+		t.Fatal("acquire handed the git slot to a jj-opted caller")
+	}
+	if _, err := os.Stat(filepath.Join(jjSlot, ".jj")); err != nil {
+		t.Fatalf("expected a jj workspace on day 2: %v", err)
+	}
+
+	// The old git slot is intact and visible: status names its flavor.
+	if _, err := os.Stat(filepath.Join(gitSlot, ".git")); err != nil {
+		t.Fatalf("the git slot must survive untouched for migration: %v", err)
+	}
+	stdout, _, exitCode = runTreehouse(t, repoDir, homeDir, nil, "status", "--json")
+	if exitCode != 0 {
+		t.Fatal("status --json failed")
+	}
+	if !strings.Contains(stdout, `"flavor":"git"`) || !strings.Contains(stdout, `"flavor":"jj"`) {
+		t.Fatalf("status --json must name both flavors, got: %s", stdout)
+	}
+}

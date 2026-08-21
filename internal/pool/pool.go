@@ -24,9 +24,12 @@ const (
 
 // WorktreeStatus describes one managed worktree as reported by List.
 type WorktreeStatus struct {
-	Name      string
-	Path      string
-	Status    string
+	Name   string
+	Path   string
+	Status string
+	// Flavor is the backend the worktree's own marker identifies ("git" or
+	// "jj"), independent of what the repository currently selects.
+	Flavor    string
 	Processes []process.ProcessInfo
 	// LeaseID identifies the current acquisition of a leased worktree.
 	LeaseID string
@@ -134,9 +137,20 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 
 		state = healState(state)
 
-		// Try to find an available worktree (clean, not in-use, not leased)
+		// Try to find an available worktree (clean, not in-use, not leased,
+		// and of the flavor the repository currently selects: a caller who
+		// opted in to jj must not be handed a git worktree where jj commands
+		// do not work, and vice versa; other-flavor slots are left intact
+		// and leave the pool via the documented migration, destroy then
+		// re-acquire).
+		wantFlavor := vcs.BackendNameFor(repoRoot)
+		otherFlavor := 0
 		for i, wt := range state.Worktrees {
 			if wt.Destroying || wt.Leased || ownerAlive(wt) {
+				continue
+			}
+			if flavor := vcs.WorktreeBackendName(wt.Path); flavor != "" && flavor != wantFlavor {
+				otherFlavor++
 				continue
 			}
 			inUse, _ := process.IsWorktreeInUse(wt.Path)
@@ -176,6 +190,9 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 
 		// No available worktree — create new if pool allows
 		if len(state.Worktrees) >= poolSize {
+			if otherFlavor > 0 {
+				return fmt.Errorf("all %d worktrees are in use, dirty, or hold the other backend's worktrees (%d %s-flavored; the repository selects %s). Run 'treehouse status' to see details, destroy old-flavor worktrees to migrate the pool, or increase max_trees in treehouse.toml", len(state.Worktrees), otherFlavor, map[string]string{"git": "jj", "jj": "git"}[wantFlavor], wantFlavor)
+			}
 			return fmt.Errorf("all %d worktrees are in use or dirty (max_trees = %d). Run 'treehouse status' to see details, or increase max_trees in treehouse.toml", len(state.Worktrees), poolSize)
 		}
 
@@ -390,6 +407,7 @@ func List(poolDir string) ([]WorktreeStatus, error) {
 				Name:   wt.Name,
 				Path:   wt.Path,
 				Status: StatusAvailable,
+				Flavor: vcs.WorktreeBackendName(wt.Path),
 			}
 
 			procs, _ := process.FindProcessesInWorktree(wt.Path)
