@@ -185,13 +185,17 @@ func destroySingleExit(result pool.DestroyResult, opts pool.DestroyOptions) erro
 		if skip.LeasedBulk {
 			continue
 		}
-		if len(skip.NeededFlags) > 0 {
-			return fmt.Errorf("did not destroy %s (%s); re-run with %s",
-				skip.Target.Name, skip.Target.Class, strings.Join(skip.NeededFlags, " "))
+		flags := skip.NeededFlags
+		if len(flags) == 0 && skip.NeededFlag != "" {
+			flags = []string{skip.NeededFlag}
 		}
-		if skip.NeededFlag != "" {
+		if len(flags) > 0 {
+			if unverifiedOtherFlavor(skip.Target) {
+				return fmt.Errorf("did not destroy %s (unverified %s-flavored worktree); re-run with %s to destroy it and migrate the pool",
+					skip.Target.Name, skip.Target.Flavor, strings.Join(flags, " "))
+			}
 			return fmt.Errorf("did not destroy %s (%s); re-run with %s",
-				skip.Target.Name, skip.Target.Class, skip.NeededFlag)
+				skip.Target.Name, skip.Target.Class, strings.Join(flags, " "))
 		}
 		return fmt.Errorf("did not destroy %s: %s", skip.Target.Name, skip.Target.Detail)
 	}
