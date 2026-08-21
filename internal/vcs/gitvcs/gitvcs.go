@@ -350,7 +350,26 @@ func selectedSeedPathsWithManifest(repoRoot string, manifest []byte) ([]byte, er
 	// an exclude file, including negation, escaping, and ** patterns.
 	selected, err := gitOutput(repoRoot, nil,
 		"ls-files", "-z", "--others", "--ignored", "--exclude-from="+excludePath)
-	return selected, err
+	if err != nil || len(selected) == 0 {
+		return selected, err
+	}
+	ignored, err := gitOutput(repoRoot, nil,
+		"ls-files", "-z", "--others", "--ignored", "--exclude-standard")
+	if err != nil {
+		return nil, err
+	}
+	ignoredPaths := make(map[string]bool)
+	for _, name := range bytes.Split(bytes.TrimSuffix(ignored, []byte{0}), []byte{0}) {
+		ignoredPaths[string(name)] = true
+	}
+	var eligible bytes.Buffer
+	for _, name := range bytes.Split(bytes.TrimSuffix(selected, []byte{0}), []byte{0}) {
+		if ignoredPaths[string(name)] {
+			eligible.Write(name)
+			eligible.WriteByte(0)
+		}
+	}
+	return eligible.Bytes(), nil
 }
 
 func openRootUnchanged(path string, expected os.FileInfo) (*os.Root, error) {

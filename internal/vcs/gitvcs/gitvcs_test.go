@@ -624,6 +624,23 @@ func TestSeedWorktreeCopiesOnlyManifestSelections(t *testing.T) {
 	}
 }
 
+func TestSeedWorktreeDoesNotCopyManifestSelectedUnignoredFile(t *testing.T) {
+	repo, worktree := setupSeedWorktree(t, "selected.env\ncredentials.txt\n")
+	writeTestFile(t, repo, ".gitignore", "*.env\n")
+	mustGit(t, repo, "add", "-f", ".gitignore")
+	mustGit(t, repo, "commit", "-m", "narrow ignored files")
+	writeTestFile(t, repo, "selected.env", "selected\n")
+	writeTestFile(t, repo, "credentials.txt", "credentials\n")
+
+	if err := SeedWorktree(repo, worktree); err != nil {
+		t.Fatal(err)
+	}
+	assertTestFile(t, worktree, "selected.env", "selected\n")
+	if _, err := os.Lstat(filepath.Join(worktree, "credentials.txt")); !os.IsNotExist(err) {
+		t.Fatalf("unignored file was unexpectedly seeded: %v", err)
+	}
+}
+
 func TestSeedWorktreeFlattensSourceSymlink(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "linked.env\n")
 	outside := filepath.Join(t.TempDir(), "secret")
