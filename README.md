@@ -98,10 +98,11 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
   git fetch origin
       │
       ▼
-  ┌───────────────────────────────────────┐
-  │  Scan pool for available worktree     │
-  │  (not leased, not in-use, not dirty)  │
-  └──────────┬────────────────────────────┘
+  ┌──────────────────────────────────────────────────────┐
+  │  Scan pool for a safely reusable worktree            │
+  │  (idle, unleased, clean, and HEAD merged into the    │
+  │  exact reset target; skip if safety is unprovable)   │
+  └──────────┬───────────────────────────────────────────┘
              │
         ┌────┴────┐
         │  Found? │

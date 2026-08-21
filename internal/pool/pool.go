@@ -143,12 +143,22 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			if inUse {
 				continue
 			}
-			dirty, _ := vcs.IsDirty(wt.Path)
-			if dirty {
+			// Skip a slot that carries unlanded work. A crashed or rebooted owner
+			// leaves the reservation empty while its worktree still holds committed
+			// commits (a clean tree passes IsDirty), so availability alone must not
+			// authorize a reset. Fail closed: if either the working tree or the
+			// merge state cannot be proven safe, leave the slot untouched rather
+			// than let ResetWorktree discard the work.
+			dirty, err := vcs.IsDirty(wt.Path)
+			if err != nil || dirty {
 				continue
 			}
-			// Found an available one — reset it
-			if err := vcs.ResetWorktree(wt.Path, branch); err != nil {
+			safe, resetRef, err := vcs.IsWorktreeSafeToReset(wt.Path, branch)
+			if err != nil || !safe {
+				continue
+			}
+			// Found an available one. Reset it to the verified commit.
+			if err := vcs.ResetWorktreeToRef(wt.Path, resetRef); err != nil {
 				continue
 			}
 			if err := markAcquired(&state.Worktrees[i], opts); err != nil {

@@ -198,19 +198,45 @@ func Fetch(repoRoot string) error {
 }
 
 func ResetWorktree(worktreePath, branch string) error {
-	repoRoot, err := runGit(worktreePath, "rev-parse", "--show-toplevel")
+	ref, err := resolveResetRef(worktreePath, branch)
 	if err != nil {
-		repoRoot = worktreePath
+		return err
 	}
-	ref := branchRef(repoRoot, branch)
+	return ResetWorktreeToRef(worktreePath, ref)
+}
+
+// ResetWorktreeToRef resets worktreePath to an already resolved commit.
+func ResetWorktreeToRef(worktreePath, ref string) error {
 	if _, err := runGit(worktreePath, "checkout", "--detach", "--force", ref); err != nil {
 		return err
 	}
 	if _, err := runGit(worktreePath, "reset", "--hard", ref); err != nil {
 		return err
 	}
-	_, err = runGit(worktreePath, "clean", "-fd")
+	_, err := runGit(worktreePath, "clean", "-fd")
 	return err
+}
+
+func resolveResetRef(worktreePath, branch string) (string, error) {
+	repoRoot, err := runGit(worktreePath, "rev-parse", "--show-toplevel")
+	if err != nil {
+		repoRoot = worktreePath
+	}
+	ref := branchRef(repoRoot, branch)
+	return refCommit(worktreePath, ref)
+}
+
+// IsWorktreeSafeToReset reports whether worktreePath can be reset to branch
+// without discarding committed work and returns the immutable commit it checked.
+// Callers must pass that commit to ResetWorktreeToRef so verification and reset
+// share one target. The check fails closed when the target cannot be resolved.
+func IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, error) {
+	ref, err := resolveResetRef(worktreePath, branch)
+	if err != nil {
+		return false, "", err
+	}
+	safe, err := IsHeadMergedIntoRef(worktreePath, ref)
+	return safe, ref, err
 }
 
 func DetachWorktree(worktreePath string) error {
@@ -453,6 +479,12 @@ func (*Backend) RemoveCleanWorktree(repoRoot, path string) error {
 func (*Backend) Fetch(repoRoot string) error { return Fetch(repoRoot) }
 func (*Backend) ResetWorktree(worktreePath, branch string) error {
 	return ResetWorktree(worktreePath, branch)
+}
+func (*Backend) ResetWorktreeToRef(worktreePath, ref string) error {
+	return ResetWorktreeToRef(worktreePath, ref)
+}
+func (*Backend) IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, error) {
+	return IsWorktreeSafeToReset(worktreePath, branch)
 }
 func (*Backend) DetachWorktree(worktreePath string) error { return DetachWorktree(worktreePath) }
 func (*Backend) DefaultBranchMergeRef(repoRoot string) (string, error) {

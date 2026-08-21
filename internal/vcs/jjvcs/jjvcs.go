@@ -268,21 +268,24 @@ func (b *Backend) Fetch(repoRoot string) error {
 // of branch. The previous working-copy commit is abandoned, which discards
 // its changes from view while remaining recoverable via jj op restore.
 func (b *Backend) ResetWorktree(worktreePath, branch string) error {
-	// A sibling workspace may have moved the repo since this workspace was
-	// last used; recover first so the commands below see current state.
-	_, _ = runJJ(worktreePath, "workspace", "update-stale")
-
-	ref, err := branchRef(worktreePath, branch)
+	ref, err := resolveResetRef(worktreePath, branch)
 	if err != nil {
 		return err
 	}
+	return b.ResetWorktreeToRef(worktreePath, ref)
+}
+
+// ResetWorktreeToRef resets worktreePath to an already resolved commit.
+func (b *Backend) ResetWorktreeToRef(worktreePath, ref string) error {
+	// A sibling workspace may have moved the repo since this workspace was
+	// last used; recover first so the commands below see current state.
+	_, _ = runJJ(worktreePath, "workspace", "update-stale")
 
 	// Skip the reset when the workspace is already clean and parked on ref.
 	dirty, err := b.IsDirty(worktreePath)
 	if err == nil && !dirty {
 		parent, perr := runJJ(worktreePath, "log", "-r", "@-", "--no-graph", "-T", `commit_id ++ "\n"`)
-		target, terr := runJJ(worktreePath, "log", "-r", ref, "--no-graph", "-T", `commit_id ++ "\n"`)
-		if perr == nil && terr == nil && parent != "" && parent == target {
+		if perr == nil && parent != "" && parent == ref {
 			return nil
 		}
 	}
@@ -292,6 +295,38 @@ func (b *Backend) ResetWorktree(worktreePath, branch string) error {
 	}
 	_, err = runJJ(worktreePath, "new", ref)
 	return err
+}
+
+func resolveResetRef(worktreePath, branch string) (string, error) {
+	_, _ = runJJ(worktreePath, "workspace", "update-stale")
+	ref, err := branchRef(worktreePath, branch)
+	if err != nil {
+		return "", err
+	}
+	target, err := runJJ(worktreePath, "log", "-r", ref, "--no-graph", "-T", `commit_id ++ "\n"`)
+	if err != nil {
+		return "", err
+	}
+	if i := strings.IndexByte(target, '\n'); i >= 0 {
+		target = target[:i]
+	}
+	if target == "" {
+		return "", fmt.Errorf("cannot resolve %s to a commit", ref)
+	}
+	return target, nil
+}
+
+// IsWorktreeSafeToReset reports whether worktreePath can be reset to branch
+// without discarding committed work and returns the immutable commit it checked.
+// Callers must pass that commit to ResetWorktreeToRef so verification and reset
+// share one target. The check fails closed when the target cannot be resolved.
+func (b *Backend) IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, error) {
+	ref, err := resolveResetRef(worktreePath, branch)
+	if err != nil {
+		return false, "", err
+	}
+	safe, err := b.IsHeadMergedIntoRef(worktreePath, ref)
+	return safe, ref, err
 }
 
 // DetachWorktree is a no-op: jj working copies are anonymous commits and

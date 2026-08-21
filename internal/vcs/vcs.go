@@ -65,6 +65,15 @@ type Backend interface {
 	// ResetWorktree returns a worktree to a pristine checkout of branch,
 	// discarding local modifications.
 	ResetWorktree(worktreePath, branch string) error
+	// ResetWorktreeToRef resets worktreePath to an already resolved commit.
+	// Callers that verified safety must pass the commit returned by
+	// IsWorktreeSafeToReset so verification and reset share one target.
+	ResetWorktreeToRef(worktreePath, ref string) error
+	// IsWorktreeSafeToReset reports whether worktreePath can be reset to
+	// branch without discarding committed work and returns the immutable
+	// commit it checked. Callers must pass that commit to ResetWorktreeToRef.
+	// The check fails closed when the target cannot be resolved.
+	IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, error)
 	// DetachWorktree releases any branch the worktree has checked out so
 	// pooled worktrees never hold branch names.
 	DetachWorktree(worktreePath string) error
@@ -269,6 +278,17 @@ func Fetch(repoRoot string) error { return backendFor(repoRoot).Fetch(repoRoot) 
 // ResetWorktree returns a worktree to a pristine checkout of branch.
 func ResetWorktree(worktreePath, branch string) error {
 	return backendFor(worktreePath).ResetWorktree(worktreePath, branch)
+}
+
+// ResetWorktreeToRef resets worktreePath to an already resolved commit.
+func ResetWorktreeToRef(worktreePath, ref string) error {
+	return backendFor(worktreePath).ResetWorktreeToRef(worktreePath, ref)
+}
+
+// IsWorktreeSafeToReset reports whether worktreePath can be reset to branch
+// without discarding committed work and returns the immutable commit it checked.
+func IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, error) {
+	return backendFor(worktreePath).IsWorktreeSafeToReset(worktreePath, branch)
 }
 
 // DetachWorktree releases any branch the worktree has checked out.

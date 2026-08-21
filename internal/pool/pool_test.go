@@ -158,6 +158,88 @@ func TestAcquire_DoesNotReuseWorktreeReservedByPostCreateHook(t *testing.T) {
 	}
 }
 
+func TestAcquire_DoesNotResetWorktreeAheadOfBaseWithDeadOwner(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+
+	wtPath, err := Acquire(repoDir, poolDir, 1, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+
+	// Simulate an agent that committed work and then went away: a clean working
+	// tree whose HEAD is ahead of base, with no live owner reservation.
+	if err := os.WriteFile(filepath.Join(wtPath, "unlanded.txt"), []byte("keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, wtPath, "add", "unlanded.txt")
+	runGit(t, wtPath, "commit", "-m", "committed but unlanded")
+	head := gitOut(t, wtPath, "rev-parse", "HEAD")
+	clearOwnerReservation(t, poolDir, wtPath)
+
+	// The one slot holds unlanded work, so acquire must fail closed rather than
+	// reset it. A pool of one forces the choice: reuse-and-reset or refuse.
+	if _, err := Acquire(repoDir, poolDir, 1, nil); err == nil {
+		t.Fatal("expected Acquire to fail closed rather than reset unlanded work")
+	}
+
+	if got := gitOut(t, wtPath, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("expected unlanded HEAD %s preserved, got %s", head, got)
+	}
+	if _, err := os.Stat(filepath.Join(wtPath, "unlanded.txt")); err != nil {
+		t.Fatalf("expected unlanded commit preserved on disk: %v", err)
+	}
+}
+
+func TestAcquire_ReusesMergedIdleSlotWithDeadOwner(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+
+	wtPath, err := Acquire(repoDir, poolDir, 1, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	// A clean slot at base with no live owner is genuinely disposable and must
+	// still be reused, so the unlanded-work guard does not over-skip.
+	clearOwnerReservation(t, poolDir, wtPath)
+
+	reused, err := Acquire(repoDir, poolDir, 1, nil)
+	if err != nil {
+		t.Fatalf("Acquire should reuse a merged idle slot: %v", err)
+	}
+	if reused != wtPath {
+		t.Fatalf("expected reuse of idle slot %s, got %s", wtPath, reused)
+	}
+}
+
+func clearOwnerReservation(t *testing.T, poolDir, wtPath string) {
+	t.Helper()
+	if err := WithStateLock(poolDir, func() error {
+		state, err := ReadState(poolDir)
+		if err != nil {
+			return err
+		}
+		for i := range state.Worktrees {
+			if state.Worktrees[i].Path == wtPath {
+				state.Worktrees[i].OwnerPID = 0
+				state.Worktrees[i].OwnerStartedAt = 0
+			}
+		}
+		return WriteState(poolDir, state)
+	}); err != nil {
+		t.Fatalf("clear owner reservation failed: %v", err)
+	}
+}
+
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %s failed: %v", strings.Join(args, " "), err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func TestRelease_DoesNotDependOnCurrentWorkingDirectory(t *testing.T) {
 	repoDir, poolDir := setupRepo(t)
 
