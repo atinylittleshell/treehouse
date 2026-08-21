@@ -829,6 +829,24 @@ func TestResetWorktreeRemovesSeedHiddenByModifiedManifest(t *testing.T) {
 	}
 }
 
+func TestResetWorktreeRemovesLegacySeedWhenCurrentRevisionDoesNotIgnoreIt(t *testing.T) {
+	repo, worktree := setupSeedWorktree(t, "secret.env\n")
+	writeTestFile(t, repo, "secret.env", "secret\n")
+	if err := SeedWorktree(repo, worktree); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, worktree, ".gitignore", "other.env\n")
+	mustGit(t, worktree, "add", ".gitignore")
+	mustGit(t, worktree, "commit", "-m", "stop ignoring seed")
+
+	if err := ResetWorktree(worktree, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(worktree, "secret.env")); !os.IsNotExist(err) {
+		t.Fatalf("legacy seed survived reset after ignore rules changed: %v", err)
+	}
+}
+
 func TestSeedWorktreeDoesNotFollowDestinationSymlink(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "config/settings.env\n")
 	writeTestFile(t, repo, "config/settings.env", "seeded\n")

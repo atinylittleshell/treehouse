@@ -332,24 +332,7 @@ func selectedSeedPaths(repoRoot string) ([]byte, error) {
 }
 
 func selectedSeedPathsWithManifest(repoRoot string, manifest []byte) ([]byte, error) {
-	excludeFile, err := os.CreateTemp("", "treehouse-worktreeinclude-")
-	if err != nil {
-		return nil, err
-	}
-	excludePath := excludeFile.Name()
-	defer os.Remove(excludePath)
-	if _, err := excludeFile.Write(manifest); err != nil {
-		excludeFile.Close()
-		return nil, err
-	}
-	if err := excludeFile.Close(); err != nil {
-		return nil, err
-	}
-
-	// Git owns the pattern language so .worktreeinclude behaves exactly like
-	// an exclude file, including negation, escaping, and ** patterns.
-	selected, err := gitOutput(repoRoot, nil,
-		"ls-files", "-z", "--others", "--ignored", "--exclude-from="+excludePath)
+	selected, err := manifestSelectedPaths(repoRoot, manifest)
 	if err != nil || len(selected) == 0 {
 		return selected, err
 	}
@@ -370,6 +353,27 @@ func selectedSeedPathsWithManifest(repoRoot string, manifest []byte) ([]byte, er
 		}
 	}
 	return eligible.Bytes(), nil
+}
+
+func manifestSelectedPaths(repoRoot string, manifest []byte) ([]byte, error) {
+	excludeFile, err := os.CreateTemp("", "treehouse-worktreeinclude-")
+	if err != nil {
+		return nil, err
+	}
+	excludePath := excludeFile.Name()
+	defer os.Remove(excludePath)
+	if _, err := excludeFile.Write(manifest); err != nil {
+		excludeFile.Close()
+		return nil, err
+	}
+	if err := excludeFile.Close(); err != nil {
+		return nil, err
+	}
+
+	// Git owns the pattern language so .worktreeinclude behaves exactly like
+	// an exclude file, including negation, escaping, and ** patterns.
+	return gitOutput(repoRoot, nil,
+		"ls-files", "-z", "--others", "--ignored", "--exclude-from="+excludePath)
 }
 
 func openRootUnchanged(path string, expected os.FileInfo) (*os.Root, error) {
@@ -654,7 +658,9 @@ func removeSeededFiles(worktreePath string) error {
 	if err != nil {
 		return err
 	}
-	selected, err := selectedSeedPathsWithManifest(worktreePath, manifest)
+	// Legacy state has no inventory, so cleanup cannot rely on mutable ignore
+	// rules that may differ from the checkout where these files were seeded.
+	selected, err := manifestSelectedPaths(worktreePath, manifest)
 	if err != nil || len(selected) == 0 {
 		return err
 	}
