@@ -330,14 +330,14 @@ func ResetWorktree(worktreePath, branch string) error {
 
 // ResetWorktreeToRef resets worktreePath to an already resolved commit.
 func ResetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean bool) error {
-	return backendFor(worktreePath).ResetWorktreeToRef(worktreePath, ref, expectedHead, requireClean)
+	return backendForWorktree(worktreePath).ResetWorktreeToRef(worktreePath, ref, expectedHead, requireClean)
 }
 
 // IsWorktreeSafeToReset reports whether worktreePath can be reset to branch
 // without discarding committed work and returns the immutable reset target and
 // the worktree HEAD recorded at check time.
 func IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, string, error) {
-	return backendFor(worktreePath).IsWorktreeSafeToReset(worktreePath, branch)
+	return backendForWorktree(worktreePath).IsWorktreeSafeToReset(worktreePath, branch)
 }
 
 // DetachWorktree releases any branch the worktree has checked out.

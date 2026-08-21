@@ -394,6 +394,32 @@ func TestWorktreeFactsUseSlotFlavor(t *testing.T) {
 	if !dirty {
 		t.Fatal("the slot's own jj facts say dirty; reading the enclosing repository said clean")
 	}
+
+	// The acquire-safety pair obeys the same contract: read through the
+	// slot's own backend, never the enclosing repository's. Commit the
+	// work in the slot: jj's ancestry check reads it as unmerged (unsafe),
+	// while the enclosing git repository - clean and on main - would
+	// report safe and hand acquire a green light to discard it.
+	mustRun(t, slot, "jj", "commit", "-m", "unlanded work")
+	safe, _, _, err := IsWorktreeSafeToReset(slot, "main")
+	if err == nil && safe {
+		t.Fatal("a jj slot with unmerged commits must not be safe to reset; the enclosing repository's git facts leaked through")
+	}
+	if err := ResetWorktreeToRef(slot, "main", "", true); err == nil {
+		t.Fatal("ResetWorktreeToRef through the wrong backend must refuse, not reset the enclosing repository")
+	}
+	if got, want := readFileOrEmpty(t, filepath.Join(slot, "wip.txt")), "unlanded\n"; got != want {
+		t.Fatalf("the slot's unlanded work must survive, got %q", got)
+	}
+}
+
+func readFileOrEmpty(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // TestUnrecognizedVCSValueWarnsOnceAndDefaults pins the misconfiguration
