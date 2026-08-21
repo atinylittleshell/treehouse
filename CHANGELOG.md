@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.3.0](https://github.com/kunchenguid/treehouse/compare/v2.2.1...v2.3.0) (2026-08-21)
+
+
+### Features
+
+* **vcs:** add opt-in Jujutsu (jj) workspace backend behind a VCS seam ([#100](https://github.com/kunchenguid/treehouse/issues/100)) ([a2e554c](https://github.com/kunchenguid/treehouse/commit/a2e554c15e0c8de0e8cbc0e45549acc59f6b97f9))
+* **vcs:** slot-flavor dispatch, flavor-aware acquire, and markerless fail-closed hardening ([#110](https://github.com/kunchenguid/treehouse/issues/110)) ([c88b53e](https://github.com/kunchenguid/treehouse/commit/c88b53ef6149054435fd375806117dfcd8371a0d))
+
+
+### Bug Fixes
+
+* **ci:** make update-vendor-hash fork-aware for checkout and push ([#105](https://github.com/kunchenguid/treehouse/issues/105)) ([6c40205](https://github.com/kunchenguid/treehouse/commit/6c40205c69855998ed2fac19d3c75751b504243a))
+* **get:** skip reclaiming a pool slot that holds unlanded work ([#104](https://github.com/kunchenguid/treehouse/issues/104)) ([04d8725](https://github.com/kunchenguid/treehouse/commit/04d87252f918dc3942318817b74413bf55f5b3eb))
+* **process:** wait for SIGKILLed processes to be reaped before return runs git ([#102](https://github.com/kunchenguid/treehouse/issues/102)) ([664adf8](https://github.com/kunchenguid/treehouse/commit/664adf81e4a427080449aa8e4b76b53cc54f8a24))
+
 ## [2.2.1](https://github.com/kunchenguid/treehouse/compare/v2.2.0...v2.2.1) (2026-08-21)
 
 
