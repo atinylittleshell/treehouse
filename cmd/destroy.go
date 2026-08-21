@@ -303,10 +303,11 @@ func destroySkipHint(s pool.DestroySkip) string {
 	return "left in place"
 }
 
-// unverifiedOtherFlavor reports an other-flavor worktree whose only unlanded
-// class is unverified: nothing proved its work is unlanded, verification in
-// its own backend just failed, so the honest framing for the opt-in flag is
-// pool migration rather than discarding unlanded work.
+// unverifiedOtherFlavor reports an other-flavor worktree whose only obstacle
+// is the unverified class: nothing proved its work is unlanded, no lease or
+// live process claims it, verification in its own backend just failed, so the
+// honest framing for the opt-in flag is pool migration rather than discarding
+// unlanded or actively-claimed work.
 func unverifiedOtherFlavor(t pool.DestroyTarget) bool {
 	if !t.OtherFlavor {
 		return false
@@ -316,7 +317,7 @@ func unverifiedOtherFlavor(t pool.DestroyTarget) bool {
 		switch class {
 		case pool.DestroyUnverified:
 			unverified = true
-		case pool.DestroyDirty, pool.DestroyUnmerged:
+		case pool.DestroyDirty, pool.DestroyUnmerged, pool.DestroyLeased, pool.DestroyInUse:
 			return false
 		}
 	}
