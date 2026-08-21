@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/kunchenguid/treehouse/internal/git"
 	"github.com/kunchenguid/treehouse/internal/hooks"
 	"github.com/kunchenguid/treehouse/internal/process"
+	"github.com/kunchenguid/treehouse/internal/vcs"
 )
 
 const (
@@ -111,14 +111,14 @@ func AcquireLeaseInfoWithOptions(repoRoot, poolDir string, poolSize int, postCre
 }
 
 func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts acquireOptions) (LeaseInfo, error) {
-	branch, err := git.GetDefaultBranch(repoRoot)
+	branch, err := vcs.GetDefaultBranch(repoRoot)
 	if err != nil {
 		return LeaseInfo{}, err
 	}
 
 	fmt.Fprintf(os.Stderr, "🌳 Setting up worktree...\n")
-	if !opts.skipFetch && git.HasRemote(repoRoot, "origin") {
-		if err := git.Fetch(repoRoot); err != nil {
+	if !opts.skipFetch && vcs.HasRemote(repoRoot, "origin") {
+		if err := vcs.Fetch(repoRoot); err != nil {
 			return LeaseInfo{}, fmt.Errorf("fetch failed: %w", err)
 		}
 	}
@@ -143,12 +143,12 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			if inUse {
 				continue
 			}
-			dirty, _ := git.IsDirty(wt.Path)
+			dirty, _ := vcs.IsDirty(wt.Path)
 			if dirty {
 				continue
 			}
 			// Found an available one — reset it
-			if err := git.ResetWorktree(wt.Path, branch); err != nil {
+			if err := vcs.ResetWorktree(wt.Path, branch); err != nil {
 				continue
 			}
 			if err := markAcquired(&state.Worktrees[i], opts); err != nil {
@@ -185,11 +185,11 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 		// (e.g. a temporary .git/worktrees lock or permission issue) must not
 		// wedge a get that would otherwise succeed; let AddWorktree surface the
 		// real error if one exists.
-		if err := git.PruneWorktrees(repoRoot); err != nil {
+		if err := vcs.PruneWorktrees(repoRoot); err != nil {
 			fmt.Fprintf(os.Stderr, "🌳 Warning: failed to prune stale worktrees: %v\n", err)
 		}
 
-		if err := git.AddWorktree(repoRoot, wtPath, branch); err != nil {
+		if err := vcs.AddWorktree(repoRoot, wtPath, branch); err != nil {
 			return fmt.Errorf("failed to create worktree: %w", err)
 		}
 
@@ -285,11 +285,11 @@ func ValidateReleasePreconditions(poolDir, worktreePath string, preconditions Re
 // callback is invoked only after all preconditions match and runs under that
 // lock so caller-side termination or detachment cannot race a later acquisition.
 func ReleaseConditional(poolDir, worktreePath string, preconditions ReleasePreconditions, beforeReset func() error) error {
-	repoRoot, err := git.FindRepoRootFrom(worktreePath)
+	repoRoot, err := vcs.FindRepoRootFrom(worktreePath)
 	if err != nil {
 		return err
 	}
-	branch, err := git.GetDefaultBranch(repoRoot)
+	branch, err := vcs.GetDefaultBranch(repoRoot)
 	if err != nil {
 		return err
 	}
@@ -308,7 +308,7 @@ func ReleaseConditional(poolDir, worktreePath string, preconditions ReleasePreco
 				return err
 			}
 		}
-		if err := git.ResetWorktree(worktreePath, branch); err != nil {
+		if err := vcs.ResetWorktree(worktreePath, branch); err != nil {
 			return err
 		}
 
@@ -395,7 +395,7 @@ func List(poolDir string) ([]WorktreeStatus, error) {
 				if cwdInWorktree(cwd, wt.Path) {
 					ws.Status = StatusHere
 				}
-			} else if dirty, _ := git.IsDirty(wt.Path); dirty {
+			} else if dirty, _ := vcs.IsDirty(wt.Path); dirty {
 				ws.Status = StatusDirty
 			}
 

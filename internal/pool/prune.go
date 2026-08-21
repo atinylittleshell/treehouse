@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kunchenguid/treehouse/internal/git"
 	"github.com/kunchenguid/treehouse/internal/hooks"
 	"github.com/kunchenguid/treehouse/internal/process"
+	"github.com/kunchenguid/treehouse/internal/vcs"
 )
 
 // PruneWorktree describes a stale or explicitly selected orphaned worktree that
@@ -100,7 +100,7 @@ type plannedPrunePool struct {
 // Prune finds stale idle managed worktrees and optionally deletes them.
 // A stale worktree is clean, unused, unleased, not reserved by another lifecycle
 // operation, and merged into the default branch ref selected by
-// git.DefaultBranchMergeRef.
+// vcs.DefaultBranchMergeRef.
 // In dryRun mode Prune reports candidates and reclaimable bytes without deleting.
 // Backing-repository-missing orphans are reported as skipped; use
 // PruneWithOptions with PruneOptions.PruneOrphans to include them as candidates.
@@ -118,7 +118,7 @@ func PruneWithOptions(repoRoot, poolDir string, options PruneOptions) (PruneResu
 }
 
 // PrunePool prunes one pool by deriving each worktree's repository context from
-// git metadata.
+// VCS metadata.
 // Worktrees whose repository or default branch cannot be resolved are reported
 // as skipped.
 // Backing-repository-missing orphans are reported as skipped; use
@@ -132,7 +132,7 @@ func PrunePool(poolDir string, dryRun bool, preDestroy []string) (PruneResult, e
 }
 
 // PrunePoolWithOptions prunes one pool by deriving each worktree's repository
-// context from git metadata and applying the supplied options.
+// context from VCS metadata and applying the supplied options.
 func PrunePoolWithOptions(poolDir string, options PruneOptions) (PruneResult, error) {
 	return prunePool(poolDir, options, worktreePruneContextResolver())
 }
@@ -318,21 +318,21 @@ func planPrune(entries []WorktreeEntry, resolveContext pruneContextResolver, opt
 }
 
 func resolvePruneDefaultRef(repoRoot string) (string, error) {
-	if err := git.Fetch(repoRoot); err != nil {
+	if err := vcs.Fetch(repoRoot); err != nil {
 		return "", pruneVerificationError{
 			Category: PruneSkipOriginUnreachable,
 			Reason:   "cannot fetch origin",
 			Detail:   fmt.Sprintf("refresh origin before prune: %v", err),
 		}
 	}
-	defaultRef, err := git.DefaultBranchMergeRef(repoRoot)
+	defaultRef, err := vcs.DefaultBranchMergeRef(repoRoot)
 	if err != nil {
 		category := pruneSkipCannotVerify
 		reason := "cannot resolve default branch"
-		if git.HasRemote(repoRoot, "origin") && isOriginAccessError(err) {
+		if vcs.HasRemote(repoRoot, "origin") && isOriginAccessError(err) {
 			category = PruneSkipOriginUnreachable
 			reason = "cannot resolve origin default branch"
-		} else if git.HasRemote(repoRoot, "origin") {
+		} else if vcs.HasRemote(repoRoot, "origin") {
 			reason = "cannot verify origin default branch"
 		}
 		return "", pruneVerificationError{
@@ -369,7 +369,7 @@ func worktreePruneContextResolver() pruneContextResolver {
 	contexts := make(map[string]pruneContext)
 	contextErrors := make(map[string]error)
 	return func(wt WorktreeEntry) (pruneContext, error) {
-		repoRoot, err := git.FindMainRepoRootFrom(wt.Path)
+		repoRoot, err := vcs.FindMainRepoRootFrom(wt.Path)
 		if err != nil {
 			return pruneContext{}, fmt.Errorf("resolve repository for %s: %w", wt.Path, err)
 		}
@@ -506,9 +506,9 @@ func executePrune(poolDir string, plan prunePlan, options PruneOptions) (PruneRe
 					continue
 				}
 			} else {
-				if err := git.RemoveCleanWorktree(context.RepoRoot, worktree.Path); err != nil {
+				if err := vcs.RemoveCleanWorktree(context.RepoRoot, worktree.Path); err != nil {
 					clearReservation(&state.Worktrees[idx])
-					result.Skipped = append(result.Skipped, newPruneSkipped(worktree.Name, worktree.Path, pruneSkipRemoveFailed, "git refused to remove worktree", err.Error()))
+					result.Skipped = append(result.Skipped, newPruneSkipped(worktree.Name, worktree.Path, pruneSkipRemoveFailed, "VCS refused to remove worktree", err.Error()))
 					continue
 				}
 				container, err := removableWorktreeContainer(worktree.Path)
@@ -640,7 +640,7 @@ func analyzeIdleWorktree(resolveContext pruneContextResolver, wt WorktreeEntry, 
 		return worktree, skipped, true, pruneContext{}, nil
 	}
 
-	dirty, err := git.IsDirty(worktree.Path)
+	dirty, err := vcs.IsDirty(worktree.Path)
 	if err != nil {
 		if orphaned, detail := backingRepositoryMissing(worktree.Path); orphaned {
 			skipped = newPruneSkipped(wt.Name, wt.Path, PruneSkipOrphanedBackingRepo, pruneOrphanUnverifiedWarning, detail)
@@ -660,7 +660,7 @@ func analyzeIdleWorktree(resolveContext pruneContextResolver, wt WorktreeEntry, 
 		return worktree, skipped, true, pruneContext{}, nil
 	}
 
-	merged, err := git.IsHeadMergedIntoRef(worktree.Path, context.DefaultRef)
+	merged, err := vcs.IsHeadMergedIntoRef(worktree.Path, context.DefaultRef)
 	if err != nil {
 		if orphaned, detail := backingRepositoryMissing(worktree.Path); orphaned {
 			skipped = newPruneSkipped(wt.Name, wt.Path, PruneSkipOrphanedBackingRepo, pruneOrphanUnverifiedWarning, detail)

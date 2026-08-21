@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/kunchenguid/treehouse/internal/git"
 	"github.com/kunchenguid/treehouse/internal/hooks"
 	"github.com/kunchenguid/treehouse/internal/process"
+	"github.com/kunchenguid/treehouse/internal/vcs"
 )
 
 // DestroyClass is the safety classification of a worktree considered for
@@ -258,8 +258,8 @@ func (opts DestroyOptions) missingFlags(target DestroyTarget, allowLeased bool) 
 
 // classifyForDestroy determines a managed worktree's destroy class using the
 // same safety primitives prune relies on (ownerAlive,
-// process.FindProcessesInWorktree, backingRepositoryMissing, git.IsDirty,
-// git.IsHeadMergedIntoRef against the ref from resolvePruneDefaultRef).
+// process.FindProcessesInWorktree, backingRepositoryMissing, vcs.IsDirty,
+// vcs.IsHeadMergedIntoRef against the ref from resolvePruneDefaultRef).
 func classifyForDestroy(wt WorktreeEntry, defaultRef string) DestroyTarget {
 	target := DestroyTarget{Name: wt.Name, Path: wt.Path}
 
@@ -285,7 +285,7 @@ func classifyForDestroy(wt WorktreeEntry, defaultRef string) DestroyTarget {
 		return finalizeDestroyTarget(target)
 	}
 
-	dirty, err := git.IsDirty(wt.Path)
+	dirty, err := vcs.IsDirty(wt.Path)
 	if err != nil {
 		target.addClass(DestroyUnverified, "cannot check status: "+err.Error())
 		return finalizeDestroyTarget(target)
@@ -297,7 +297,7 @@ func classifyForDestroy(wt WorktreeEntry, defaultRef string) DestroyTarget {
 		target.addClass(DestroyUnverified, "cannot verify HEAD is merged into the default branch")
 		return finalizeDestroyTarget(target)
 	}
-	merged, err := git.IsHeadMergedIntoRef(wt.Path, defaultRef)
+	merged, err := vcs.IsHeadMergedIntoRef(wt.Path, defaultRef)
 	if err != nil {
 		target.addClass(DestroyUnverified, "cannot verify merge into "+defaultRef+": "+err.Error())
 		return finalizeDestroyTarget(target)
@@ -519,14 +519,14 @@ func removeManagedWorktree(repoRoot, path string) error {
 	if !orphaned {
 		removeRepoRoot := repoRoot
 		if removeRepoRoot == "" {
-			resolvedRoot, err := git.FindMainRepoRootFrom(path)
+			resolvedRoot, err := vcs.FindMainRepoRootFrom(path)
 			if err != nil {
 				return fmt.Errorf("cannot resolve repository for worktree removal: %w", err)
 			}
 			removeRepoRoot = resolvedRoot
 		}
-		if err := git.RemoveWorktree(removeRepoRoot, path); err != nil {
-			return fmt.Errorf("git refused to remove worktree: %w", err)
+		if err := vcs.RemoveWorktree(removeRepoRoot, path); err != nil {
+			return fmt.Errorf("VCS refused to remove worktree: %w", err)
 		}
 	}
 	container, err := removableWorktreeContainer(path)
@@ -547,7 +547,7 @@ func resolvePoolRepoRoot(targets []WorktreeEntry) string {
 		if orphaned, _ := backingRepositoryMissing(wt.Path); orphaned {
 			continue
 		}
-		if root, err := git.FindMainRepoRootFrom(wt.Path); err == nil {
+		if root, err := vcs.FindMainRepoRootFrom(wt.Path); err == nil {
 			return root
 		}
 	}

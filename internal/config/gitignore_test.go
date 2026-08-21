@@ -167,25 +167,28 @@ func TestEnsureExcluded_NestedRoot(t *testing.T) {
 }
 
 func TestEnsureExcluded_NotInRepo(t *testing.T) {
-	// A temp dir that is not a git repo.
+	// A temp dir that is not a git repo: only the self-ignoring pool root is
+	// written; nothing outside it is touched.
 	dir := t.TempDir()
 	treehouseDir := filepath.Join(dir, ".treehouse")
 
 	if err := EnsureExcluded(treehouseDir); err != nil {
-		t.Fatalf("EnsureExcluded should be a no-op outside a repo, got: %v", err)
+		t.Fatalf("EnsureExcluded should succeed outside a repo, got: %v", err)
 	}
 
 	if _, err := os.Stat(filepath.Join(dir, ".gitignore")); !os.IsNotExist(err) {
-		t.Error("expected no .gitignore to be created outside a git repo")
+		t.Error("expected no .gitignore to be created outside the pool root")
 	}
+	assertSelfIgnore(t, treehouseDir)
 }
 
 func TestEnsureExcluded_DefaultRoot(t *testing.T) {
 	repoDir := setupGitRepo(t)
 
 	// When using the default root ($HOME/.treehouse), the treehouse dir is
-	// outside the repo, so EnsureExcluded should be a no-op and must not touch
-	// the repo's exclude file or .gitignore.
+	// outside the repo, so EnsureExcluded must not touch the repo's exclude
+	// file or .gitignore.
+	setUserHome(t, t.TempDir())
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)
@@ -198,5 +201,43 @@ func TestEnsureExcluded_DefaultRoot(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(repoDir, ".gitignore")); err == nil {
 		t.Error("expected no .gitignore to be created in the repo for the default root")
+	}
+	assertSelfIgnore(t, treehouseDir)
+}
+
+func assertSelfIgnore(t *testing.T, treehouseDir string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(treehouseDir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("expected self-ignoring .gitignore in the pool root: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "*" {
+		t.Errorf("expected pool root .gitignore to contain %q, got: %s", "*", data)
+	}
+}
+
+func TestEnsureExcluded_PoolRootIsSelfIgnoring(t *testing.T) {
+	repoDir := setupGitRepo(t)
+	treehouseDir := filepath.Join(repoDir, ".treehouse")
+
+	if err := EnsureExcluded(treehouseDir); err != nil {
+		t.Fatalf("EnsureExcluded failed: %v", err)
+	}
+	assertSelfIgnore(t, treehouseDir)
+
+	// An existing pool root .gitignore is left untouched.
+	custom := "custom\n"
+	if err := os.WriteFile(filepath.Join(treehouseDir, ".gitignore"), []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureExcluded(treehouseDir); err != nil {
+		t.Fatalf("EnsureExcluded failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(treehouseDir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != custom {
+		t.Errorf("expected existing pool root .gitignore to be preserved, got: %s", data)
 	}
 }

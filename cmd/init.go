@@ -9,16 +9,16 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kunchenguid/treehouse/internal/config"
-	"github.com/kunchenguid/treehouse/internal/git"
+	"github.com/kunchenguid/treehouse/internal/vcs"
 )
 
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Create a default treehouse.toml config file",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		repoRoot, err := git.FindMainRepoRoot()
+		repoRoot, err := vcs.FindMainRepoRoot()
 		if err != nil {
-			return fmt.Errorf("not in a git repository: %w", err)
+			return fmt.Errorf("not in a git or jj repository: %w", err)
 		}
 
 		dest := filepath.Join(repoRoot, "treehouse.toml")

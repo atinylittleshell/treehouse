@@ -8,10 +8,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kunchenguid/treehouse/internal/config"
-	"github.com/kunchenguid/treehouse/internal/git"
 	"github.com/kunchenguid/treehouse/internal/pool"
 	"github.com/kunchenguid/treehouse/internal/shell"
 	"github.com/kunchenguid/treehouse/internal/ui"
+	"github.com/kunchenguid/treehouse/internal/vcs"
 )
 
 var enterCmd = &cobra.Command{
@@ -42,9 +42,9 @@ func init() {
 func enterRunE(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
-	repoRoot, err := git.FindRepoRoot()
+	repoRoot, err := vcs.FindRepoRoot()
 	if err != nil {
-		return fmt.Errorf("not in a git repository: %w", err)
+		return fmt.Errorf("not in a git or jj repository: %w", err)
 	}
 
 	cfg, err := config.Load(repoRoot)

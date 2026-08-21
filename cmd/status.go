@@ -11,9 +11,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kunchenguid/treehouse/internal/config"
-	"github.com/kunchenguid/treehouse/internal/git"
 	"github.com/kunchenguid/treehouse/internal/pool"
 	"github.com/kunchenguid/treehouse/internal/ui"
+	"github.com/kunchenguid/treehouse/internal/vcs"
 )
 
 var statusJSON bool
@@ -37,9 +37,9 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show the status of all worktrees in the pool",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		repoRoot, err := git.FindMainRepoRoot()
+		repoRoot, err := vcs.FindMainRepoRoot()
 		if err != nil {
-			return fmt.Errorf("not in a git repository: %w", err)
+			return fmt.Errorf("not in a git or jj repository: %w", err)
 		}
 
 		cfg, err := config.Load(repoRoot)

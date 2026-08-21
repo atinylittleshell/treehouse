@@ -60,28 +60,41 @@ func FindProcessesInWorktree(worktreePath string) ([]ProcessInfo, error) {
 		if err != nil {
 			continue
 		}
-
-		absCwd, err := filepath.Abs(cwd)
-		if err != nil {
+		if !cwdWithinWorktree(absWorktree, cwd) {
 			continue
 		}
-		absCwd = resolvePath(absCwd)
-
-		rel, err := filepath.Rel(absWorktree, absCwd)
-		if err != nil {
-			continue
-		}
-
-		if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
-			name, _ := p.Name()
-			result = append(result, ProcessInfo{
-				PID:  p.Pid,
-				Name: name,
-			})
-		}
+		name, _ := p.Name()
+		result = append(result, ProcessInfo{
+			PID:  p.Pid,
+			Name: name,
+		})
 	}
 
 	return result, nil
+}
+
+// cwdWithinWorktree reports whether a process working directory falls inside the
+// worktree root, which must already be absolute and symlink-resolved. An empty
+// cwd never matches: gopsutil returns "" (with no error) for processes whose
+// working directory cannot be read - notably Windows system processes such as
+// System and csrss.exe - and filepath.Abs("") would otherwise resolve to the
+// caller's own directory, wrongly matching every such process whenever the
+// caller runs from inside the worktree.
+func cwdWithinWorktree(absWorktree, cwd string) bool {
+	if cwd == "" {
+		return false
+	}
+	absCwd, err := filepath.Abs(cwd)
+	if err != nil {
+		return false
+	}
+	absCwd = resolvePath(absCwd)
+
+	rel, err := filepath.Rel(absWorktree, absCwd)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // resolvePath returns the symlink-resolved path, or the input if resolution

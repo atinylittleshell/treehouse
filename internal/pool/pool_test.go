@@ -863,8 +863,8 @@ func TestExecuteDestroy_KeepsStateWhenRemovalFails(t *testing.T) {
 	if !hasDestroySkipFlags(skipped, wtPath, DestroyDisposable) {
 		t.Fatalf("expected failed removal skip without include flags, got %#v", skipped)
 	}
-	if !strings.Contains(skipped[0].Target.Detail, "git refused to remove worktree") {
-		t.Fatalf("expected git removal failure detail, got %#v", skipped)
+	if !strings.Contains(skipped[0].Target.Detail, "VCS refused to remove worktree") {
+		t.Fatalf("expected removal failure detail, got %#v", skipped)
 	}
 	if _, err := os.Stat(wtPath); err != nil {
 		t.Fatalf("expected failed removal worktree to remain on disk: %v", err)

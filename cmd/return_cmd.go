@@ -9,9 +9,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kunchenguid/treehouse/internal/config"
-	"github.com/kunchenguid/treehouse/internal/git"
 	"github.com/kunchenguid/treehouse/internal/pool"
 	"github.com/kunchenguid/treehouse/internal/ui"
+	"github.com/kunchenguid/treehouse/internal/vcs"
 )
 
 var (
@@ -65,9 +65,11 @@ var returnCmd = &cobra.Command{
 				})
 			}
 		} else {
-			err = prepareWorktreeReturn(wtPath)
+			err = confirmWorktreeReturn(wtPath)
 			if err == nil {
-				err = pool.Release(poolDir, wtPath)
+				err = pool.ReleaseConditional(poolDir, wtPath, pool.ReleasePreconditions{}, func() error {
+					return finalizeWorktreeReturn(wtPath)
+				})
 			}
 		}
 		if errors.Is(err, errReturnAborted) {
@@ -90,16 +92,9 @@ func init() {
 	rootCmd.AddCommand(returnCmd)
 }
 
-func prepareWorktreeReturn(wtPath string) error {
-	if err := confirmWorktreeReturn(wtPath); err != nil {
-		return err
-	}
-	return finalizeWorktreeReturn(wtPath)
-}
-
 func confirmWorktreeReturn(wtPath string) error {
 	if !returnForce {
-		dirty, _ := git.IsDirty(wtPath)
+		dirty, _ := vcs.IsDirty(wtPath)
 		if dirty {
 			ok, err := ui.Confirm("Worktree has uncommitted changes. Clean and return?", true)
 			if err != nil || !ok {
@@ -112,13 +107,12 @@ func confirmWorktreeReturn(wtPath string) error {
 
 func finalizeWorktreeReturn(wtPath string) error {
 	if !returnForce {
-		if err := git.DetachWorktree(wtPath); err != nil {
+		if err := vcs.DetachWorktree(wtPath); err != nil {
 			return fmt.Errorf("failed to detach worktree HEAD: %w", err)
 		}
 	}
 
-	killLingeringProcesses(wtPath)
-	return nil
+	return killLingeringProcesses(wtPath)
 }
 
 func resolveWorktreePath(args []string) (string, error) {
@@ -143,15 +137,15 @@ func resolveReturnPoolDir(wtPath string, explicitPath bool) (string, error) {
 
 	var repoRoot string
 	if explicitPath {
-		repoRoot, err = git.FindMainRepoRootFrom(wtPath)
+		repoRoot, err = vcs.FindMainRepoRootFrom(wtPath)
 	} else {
-		repoRoot, err = git.FindMainRepoRoot()
+		repoRoot, err = vcs.FindMainRepoRoot()
 	}
 	if err != nil {
 		if explicitPath {
 			return "", errReturnWorktreeUnmanaged
 		}
-		return "", fmt.Errorf("not in a git repository: %w", err)
+		return "", fmt.Errorf("not in a git or jj repository: %w", err)
 	}
 
 	cfg, err := config.Load(repoRoot)

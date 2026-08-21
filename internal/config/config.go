@@ -6,13 +6,21 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
-	"github.com/kunchenguid/treehouse/internal/git"
+	"github.com/kunchenguid/treehouse/internal/vcs"
 )
 
 type Config struct {
 	MaxTrees int    `toml:"max_trees"`
 	Root     string `toml:"root"`
-	Hooks    Hooks  `toml:"hooks,omitempty"`
+	// VCS selects the version-control backend. Git is the default
+	// everywhere; set "jj" to opt in to the Jujutsu backend. The vcs
+	// package parses the config files itself at backend selection time
+	// (TREEHOUSE_VCS, then the repo-root treehouse.toml, then the
+	// user-level config.toml), and a jj opt-in applies only where a .jj
+	// directory actually exists. Pooled jj workspaces inherit the opt-in
+	// from their main repository root.
+	VCS   string `toml:"vcs,omitempty"`
+	Hooks Hooks  `toml:"hooks,omitempty"`
 }
 
 type Hooks struct {
@@ -109,13 +117,13 @@ func loadUser() (Config, bool, error) {
 func ResolvePoolDir(repoRoot string, root string) (string, error) {
 	// Use remote URL for the hash when available; fall back to the
 	// absolute repo path for purely-local repositories.
-	hashInput, err := git.GetRemoteURL(repoRoot)
+	hashInput, err := vcs.GetRemoteURL(repoRoot)
 	if err != nil {
 		hashInput = repoRoot
 	}
 
 	repoName := filepath.Base(repoRoot)
-	shortHash := git.ShortHash(hashInput)
+	shortHash := vcs.ShortHash(hashInput)
 	poolName := repoName + "-" + shortHash
 
 	poolRoot, err := ResolvePoolRoot(repoRoot, root)

@@ -18,7 +18,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: DeterminateSystems/nix-installer-action@main
@@ -48,6 +49,12 @@ jobs:
       - name: Commit if changed
         run: |
           git diff --quiet flake.nix && exit 0
+
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            echo "::warning::vendorHash is out of date, but the PR head is a fork (${{ github.event.pull_request.head.repo.full_name }}) that this workflow's token cannot push to. The build above already verified the corrected vendorHash - update flake.nix manually on the fork, or push from a branch on ${{ github.repository }}, before merging."
+            exit 1
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add flake.nix

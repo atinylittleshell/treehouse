@@ -231,6 +231,7 @@ func buildEnv(homeDir string, extra ...string) []string {
 		"HOMEDRIVE":     true,
 		"HOMEPATH":      true,
 		"TREEHOUSE_DIR": true,
+		"TREEHOUSE_VCS": true,
 	}
 	for _, kv := range extra {
 		if k, _, ok := strings.Cut(kv, "="); ok {
