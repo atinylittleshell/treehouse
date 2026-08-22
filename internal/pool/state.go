@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -52,8 +53,11 @@ func newLeaseID() (string, error) {
 }
 
 type State struct {
+	Version   int             `json:"version,omitempty"`
 	Worktrees []WorktreeEntry `json:"worktrees"`
 }
+
+const stateVersion = 1
 
 func stateFilePath(poolDir string) string {
 	return filepath.Join(poolDir, "treehouse-state.json")
@@ -98,17 +102,40 @@ func ReadState(poolDir string) (State, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return recoverCorruptState(poolDir, err)
 	}
+	if s.Version < 0 || s.Version > stateVersion {
+		return State{}, fmt.Errorf("unsupported treehouse state version %d", s.Version)
+	}
 	for i := range s.Worktrees {
 		wt := &s.Worktrees[i]
-		// Released Treehouse versions predate seeding, so ordinary legacy
-		// entries have a verified empty inventory. Safety quarantines are the
-		// only missing inventories that must remain unknown.
-		if !wt.SeedInventoryKnown && !strings.HasPrefix(wt.LeaseHolder, "quarantined:") && wt.LeaseHolder != recoveredLeaseHolder {
+		if s.Version == 0 && !wt.SeedInventoryKnown && !strings.HasPrefix(wt.LeaseHolder, "quarantined:") && wt.LeaseHolder != recoveredLeaseHolder {
 			wt.SeededPaths = []string{}
 			wt.SeedInventoryKnown = true
 		}
+		if !wt.SeedInventoryKnown || !validSeedInventory(wt.SeededPaths) {
+			wt.Leased = true
+			wt.LeaseHolder = recoveredLeaseHolder
+			wt.SeededPaths = nil
+			wt.SeedInventoryKnown = false
+			if wt.LeasedAt.IsZero() {
+				wt.LeasedAt = time.Now()
+			}
+		}
 	}
+	s.Version = stateVersion
 	return recoverMissingStateEntries(poolDir, s)
+}
+
+func validSeedInventory(paths []string) bool {
+	for _, name := range paths {
+		if name == "" || path.IsAbs(name) || path.Clean(name) != name || strings.ContainsAny(name, "\\\x00") {
+			return false
+		}
+		first := strings.SplitN(name, "/", 2)[0]
+		if strings.EqualFold(first, ".git") || strings.EqualFold(first, ".jj") {
+			return false
+		}
+	}
+	return true
 }
 
 // recoverMissingStateEntries covers the narrow window where creating a Git
@@ -221,6 +248,7 @@ func recoverCorruptState(poolDir string, parseErr error) (State, error) {
 // in the same directory, fsyncs it, commits it with the platform's replacement
 // primitive, and syncs the parent directory where the platform supports that.
 func WriteState(poolDir string, s State) error {
+	s.Version = stateVersion
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err

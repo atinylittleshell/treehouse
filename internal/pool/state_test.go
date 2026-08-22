@@ -2,6 +2,7 @@ package pool
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -96,6 +97,61 @@ func TestReadState_LoadsPreIdentityLease(t *testing.T) {
 	}
 	if !lease.SeedInventoryKnown || len(lease.SeededPaths) != 0 {
 		t.Fatalf("state from before seeding was not migrated to an empty inventory: %#v", lease)
+	}
+}
+
+func TestReadState_QuarantinesCurrentStateWithMissingSeedInventory(t *testing.T) {
+	poolDir := t.TempDir()
+	worktreePath := makeFakeWorktree(t, poolDir, "1", "myrepo")
+	stateJSON := fmt.Sprintf(`{
+  "version": %d,
+  "worktrees": [{
+    "name": "1",
+    "path": %q,
+    "created_at": "2026-07-20T12:00:00Z"
+  }]
+}`, 1, worktreePath)
+	if err := os.WriteFile(stateFilePath(poolDir), []byte(stateJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := state.Worktrees[0]
+	if !entry.Leased || entry.SeedInventoryKnown || entry.LeaseHolder != recoveredLeaseHolder {
+		t.Fatalf("missing current inventory was not quarantined: %#v", entry)
+	}
+}
+
+func TestReadState_RecoversInvalidSeedInventory(t *testing.T) {
+	poolDir := t.TempDir()
+	worktreePath := makeFakeWorktree(t, poolDir, "1", "myrepo")
+	stateJSON := fmt.Sprintf(`{
+  "version": %d,
+  "worktrees": [{
+    "name": "1",
+    "path": %q,
+    "created_at": "2026-07-20T12:00:00Z",
+    "seeded_paths": [".git"],
+    "seed_inventory_known": true
+  }]
+}`, 1, worktreePath)
+	if err := os.WriteFile(stateFilePath(poolDir), []byte(stateJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := state.Worktrees[0]
+	if !entry.Leased || entry.SeedInventoryKnown || entry.LeaseHolder != recoveredLeaseHolder {
+		t.Fatalf("invalid inventory was not conservatively recovered: %#v", entry)
+	}
+	if _, err := os.Stat(filepath.Join(worktreePath, ".git")); err != nil {
+		t.Fatalf("invalid inventory damaged worktree marker: %v", err)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -666,6 +667,15 @@ func IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, string, e
 }
 
 func removeSeededPaths(worktreePath string, paths []string, expected os.FileInfo) error {
+	for _, name := range paths {
+		if name == "" || path.IsAbs(name) || path.Clean(name) != name || strings.ContainsAny(name, "\\\x00") {
+			return fmt.Errorf("invalid seeded path %q", name)
+		}
+		first := strings.SplitN(name, "/", 2)[0]
+		if strings.EqualFold(first, ".git") || strings.EqualFold(first, ".jj") {
+			return fmt.Errorf("invalid seeded path %q", name)
+		}
+	}
 	root, worktree, err := openCleanupRoot(worktreePath, expected)
 	if err != nil {
 		return err

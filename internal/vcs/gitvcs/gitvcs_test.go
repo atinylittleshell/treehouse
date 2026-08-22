@@ -895,6 +895,17 @@ func TestSeedInventoryRemovesSeedWhoseSourceWasDeleted(t *testing.T) {
 	}
 }
 
+func TestResetWorktreeRejectsControlPathSeedInventory(t *testing.T) {
+	worktree, _, _ := setupSafeResetWorktree(t)
+
+	if err := ResetWorktreeWithSeededPaths(worktree, "main", []string{".git"}); err == nil {
+		t.Fatal("reset accepted a control path as seeded inventory")
+	}
+	if _, err := os.Stat(filepath.Join(worktree, ".git")); err != nil {
+		t.Fatalf("invalid inventory damaged worktree marker: %v", err)
+	}
+}
+
 func TestRemoveSeededPathsRejectsSymlinkedRoot(t *testing.T) {
 	outside := t.TempDir()
 	writeTestFile(t, outside, "secret.env", "keep me\n")
