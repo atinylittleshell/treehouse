@@ -200,7 +200,7 @@ With the Git backend, commit a `.worktreeinclude` file to seed selected gitignor
 local-config/
 ```
 
-Treehouse refreshes selected files whenever it creates or reuses a worktree. It preserves regular-file permissions, including executable bits. A source symlink becomes a regular file containing the symlink target text; Treehouse never follows it or creates a destination symlink. Rooted filesystem operations prevent selected paths and existing destination symlinks from escaping either checkout.
+Treehouse refreshes selected files whenever it creates or reuses a worktree. On Unix-like systems, it preserves regular-file permissions, including executable bits. A source symlink becomes a regular file containing the symlink target text; Treehouse never follows it or creates a destination symlink. Rooted filesystem operations prevent selected paths and existing destination symlinks from escaping either checkout.
 
 If seeding fails, acquisition fails too. A newly created worktree is removed; if cleanup fails, or if a reused worktree was only partly refreshed, Treehouse records it as leased and quarantined so a later `get` cannot hand it out silently. Inspect it with `treehouse status`. If Treehouse reports that its seeded-file inventory is unknown, remove it with `treehouse destroy <path> --include-leased --yes`; `treehouse return` refuses to reuse it. Other quarantined worktrees can be returned after they are safe to reuse.
 
