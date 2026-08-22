@@ -96,11 +96,21 @@ func TestStaleJJAuthenticationRequiresSignedInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := removeAuthenticatedStaleJJSeedState(poolDir, signed); err != nil {
+	if len(signed.Worktrees) != 1 {
+		t.Fatalf("signed state entries = %d, want 1", len(signed.Worktrees))
+	}
+	if _, err := List(poolDir); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(authPath); !os.IsNotExist(err) {
 		t.Fatalf("signed state did not remove managed authentication file: %v", err)
+	}
+	healed, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(healed.Worktrees) != 0 {
+		t.Fatalf("missing workspace remained after status: %#v", healed.Worktrees)
 	}
 }
 

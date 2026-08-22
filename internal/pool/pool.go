@@ -174,10 +174,10 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			return err
 		}
 
-		if err := removeAuthenticatedStaleJJSeedState(poolDir, state); err != nil {
+		state, err = healState(poolDir, state)
+		if err != nil {
 			return err
 		}
-		state = healState(state)
 
 		// Try to find an available worktree (clean, not in-use, not leased,
 		// and of the flavor the repository currently selects: a caller who
@@ -550,7 +550,10 @@ func List(poolDir string) ([]WorktreeStatus, error) {
 			return err
 		}
 
-		state = healState(state)
+		state, err = healState(poolDir, state)
+		if err != nil {
+			return err
+		}
 		if err := WriteState(poolDir, state); err != nil {
 			return err
 		}
@@ -610,7 +613,10 @@ func FindByPath(poolDir, path string) (*WorktreeEntry, error) {
 	return nil, nil
 }
 
-func healState(state State) State {
+func healState(poolDir string, state State) (State, error) {
+	if err := removeAuthenticatedStaleJJSeedState(poolDir, state); err != nil {
+		return state, err
+	}
 	var healed []WorktreeEntry
 	for _, wt := range state.Worktrees {
 		if _, err := os.Stat(wt.Path); err == nil {
@@ -623,7 +629,7 @@ func healState(state State) State {
 		}
 	}
 	state.Worktrees = healed
-	return state
+	return state, nil
 }
 
 func removeAuthenticatedStaleJJSeedState(poolDir string, state State) error {
