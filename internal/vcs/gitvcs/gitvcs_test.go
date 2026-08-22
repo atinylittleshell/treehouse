@@ -869,6 +869,24 @@ func TestLegacySeedCleanupPreservesUnignoredManifestSelection(t *testing.T) {
 	assertTestFile(t, worktree, "notes.txt", "keep me\n")
 }
 
+func TestLegacySeedCleanupRemovesSeedWhoseSourceWasDeleted(t *testing.T) {
+	repo, worktree := setupSeedWorktree(t, "secret.env\n")
+	writeTestFile(t, repo, "secret.env", "secret\n")
+	if err := SeedWorktree(repo, worktree); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(repo, "secret.env")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := removeSeededFiles(worktree); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(worktree, "secret.env")); !os.IsNotExist(err) {
+		t.Fatalf("obsolete seed survived after its source was deleted: %v", err)
+	}
+}
+
 func TestRemoveSeededPathsRejectsSymlinkedRoot(t *testing.T) {
 	outside := t.TempDir()
 	writeTestFile(t, outside, "secret.env", "keep me\n")

@@ -364,7 +364,11 @@ func ResetWorktree(worktreePath, branch string) error {
 
 // ResetWorktreeWithSeededPaths resets after removing trusted seeded files.
 func ResetWorktreeWithSeededPaths(worktreePath, branch string, seededPaths []string) error {
-	return backendFor(worktreePath).ResetWorktreeWithSeededPaths(worktreePath, branch, seededPaths)
+	b, err := destructiveBackendForWorktree(worktreePath)
+	if err != nil {
+		return err
+	}
+	return b.ResetWorktreeWithSeededPaths(worktreePath, branch, seededPaths)
 }
 
 // SeedWorktree copies backend-specific ignored files into a new worktree.
@@ -383,7 +387,11 @@ func ResetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean boo
 
 // ResetWorktreeToRefWithSeededPaths resets after removing trusted seeded files.
 func ResetWorktreeToRefWithSeededPaths(worktreePath, ref, expectedHead string, requireClean bool, seededPaths []string) error {
-	return backendFor(worktreePath).ResetWorktreeToRefWithSeededPaths(worktreePath, ref, expectedHead, requireClean, seededPaths)
+	b, err := destructiveBackendForWorktree(worktreePath)
+	if err != nil {
+		return err
+	}
+	return b.ResetWorktreeToRefWithSeededPaths(worktreePath, ref, expectedHead, requireClean, seededPaths)
 }
 
 // IsWorktreeSafeToReset reports whether worktreePath can be reset to branch

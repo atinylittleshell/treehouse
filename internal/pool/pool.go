@@ -343,7 +343,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			SeedInventoryKnown: true,
 		}
 		state.Worktrees = append(state.Worktrees, entry)
-		if err := writeState(poolDir, state); err != nil {
+		if err := persistState(poolDir, state); err != nil {
 			return err
 		}
 
@@ -355,7 +355,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 		state.Worktrees[len(state.Worktrees)-1] = entry
 
 		acquired = leaseInfoFromEntry(entry)
-		if err := writeState(poolDir, state); err != nil {
+		if err := persistState(poolDir, state); err != nil {
 			return err
 		}
 		runPostCreate = true

@@ -3,6 +3,7 @@ package pool
 import (
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -500,6 +501,39 @@ func TestAcquire_ReusedCommittedFinalStateWriteErrorReturnsAcquisition(t *testin
 	}
 	if len(state.Worktrees) != 1 || state.Worktrees[0].OwnerPID == 0 || state.Worktrees[0].Leased {
 		t.Fatalf("committed acquisition state was not preserved: %#v", state.Worktrees)
+	}
+}
+
+func TestAcquire_NewCommittedStateWriteErrorsReturnLease(t *testing.T) {
+	for _, failAt := range []int{1, 2} {
+		t.Run(fmt.Sprintf("write-%d", failAt), func(t *testing.T) {
+			repoDir, poolDir := setupLocalRepo(t)
+			oldWriteState := writeState
+			writes := 0
+			writeState = func(poolDir string, state State) error {
+				writes++
+				if err := oldWriteState(poolDir, state); err != nil {
+					return err
+				}
+				if writes == failAt {
+					return errors.New("directory sync failed after commit")
+				}
+				return nil
+			}
+			t.Cleanup(func() { writeState = oldWriteState })
+
+			lease, err := AcquireLeaseInfo(repoDir, poolDir, 1, nil, "test-holder")
+			if err != nil {
+				t.Fatalf("AcquireLeaseInfo failed after state was committed: %v", err)
+			}
+			state, err := ReadState(poolDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(state.Worktrees) != 1 || !state.Worktrees[0].Leased || state.Worktrees[0].LeaseID != lease.LeaseID {
+				t.Fatalf("committed lease state was not preserved: %#v", state.Worktrees)
+			}
+		})
 	}
 }
 
