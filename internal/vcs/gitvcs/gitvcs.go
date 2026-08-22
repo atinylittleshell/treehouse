@@ -746,7 +746,39 @@ func openCleanupRoot(worktreePath string, expected os.FileInfo) (*os.Root, *os.F
 		worktree.Close()
 		return nil, nil, err
 	}
+	if err := authenticateLinkedWorktree(root, worktreePath); err != nil {
+		root.Close()
+		worktree.Close()
+		return nil, nil, err
+	}
 	return root, worktree, nil
+}
+
+func authenticateLinkedWorktree(root *os.Root, worktreePath string) error {
+	marker, err := root.Lstat(".git")
+	if err != nil || !marker.Mode().IsRegular() {
+		return fmt.Errorf("refusing to clean unregistered worktree %s", worktreePath)
+	}
+	contents, err := root.ReadFile(".git")
+	if err != nil {
+		return err
+	}
+	gitDir, ok := strings.CutPrefix(strings.TrimSpace(string(contents)), "gitdir: ")
+	if !ok || gitDir == "" {
+		return fmt.Errorf("refusing to clean unregistered worktree %s", worktreePath)
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(worktreePath, gitDir)
+	}
+	backlink, err := os.ReadFile(filepath.Join(filepath.Clean(gitDir), "gitdir"))
+	if err != nil {
+		return fmt.Errorf("refusing to clean unregistered worktree %s", worktreePath)
+	}
+	backlinkInfo, err := os.Stat(filepath.Clean(string(bytes.TrimSpace(backlink))))
+	if err != nil || !os.SameFile(marker, backlinkInfo) {
+		return fmt.Errorf("refusing to clean unregistered worktree %s", worktreePath)
+	}
+	return nil
 }
 
 func DetachWorktree(worktreePath string) error {

@@ -953,6 +953,16 @@ func TestRemoveSeededPathsRejectsReplacementDirectory(t *testing.T) {
 	assertTestFile(t, worktree, "secret.env", "keep me\n")
 }
 
+func TestRemoveSeededPathsRejectsUnregisteredReplacementDirectory(t *testing.T) {
+	replacement := t.TempDir()
+	writeTestFile(t, replacement, "secret.env", "keep me\n")
+
+	if err := RemoveSeededPaths(replacement, []string{"secret.env"}); err == nil {
+		t.Fatal("expected cleanup to reject an unregistered replacement directory")
+	}
+	assertTestFile(t, replacement, "secret.env", "keep me\n")
+}
+
 func TestSeedWorktreeRefusesDestinationSymlink(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "config/settings.env\n")
 	writeTestFile(t, repo, "config/settings.env", "seeded\n")
