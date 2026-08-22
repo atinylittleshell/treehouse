@@ -678,9 +678,13 @@ func removeSeededFiles(worktreePath string) error {
 	if err != nil {
 		return err
 	}
-	// Legacy state has no inventory, so cleanup cannot rely on mutable ignore
-	// rules that may differ from the checkout where these files were seeded.
-	selected, err := manifestSelectedPaths(worktreePath, manifest)
+	// Legacy state has no inventory, so recompute eligibility from the main
+	// checkout where Treehouse originally sourced the seeds.
+	repoRoot, err := FindMainRepoRootFrom(worktreePath)
+	if err != nil {
+		return err
+	}
+	selected, err := selectedSeedPathsWithManifest(repoRoot, manifest)
 	if err != nil || len(selected) == 0 {
 		return err
 	}

@@ -855,6 +855,20 @@ func TestResetWorktreeRemovesLegacySeedWhenCurrentRevisionDoesNotIgnoreIt(t *tes
 	}
 }
 
+func TestLegacySeedCleanupPreservesUnignoredManifestSelection(t *testing.T) {
+	repo, worktree := setupSeedWorktree(t, "notes.txt\n")
+	writeTestFile(t, repo, ".gitignore", "*.env\n")
+	mustGit(t, repo, "add", ".gitignore")
+	mustGit(t, repo, "commit", "-m", "stop ignoring notes")
+	mustGit(t, worktree, "reset", "--hard", "main")
+	writeTestFile(t, worktree, "notes.txt", "keep me\n")
+
+	if err := removeSeededFiles(worktree); err != nil {
+		t.Fatal(err)
+	}
+	assertTestFile(t, worktree, "notes.txt", "keep me\n")
+}
+
 func TestSeedWorktreeDoesNotFollowDestinationSymlink(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "config/settings.env\n")
 	writeTestFile(t, repo, "config/settings.env", "seeded\n")
