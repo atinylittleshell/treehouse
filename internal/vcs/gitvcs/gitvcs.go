@@ -735,7 +735,7 @@ func RemoveSeededPathsFromJJWorkspace(worktreePath string, paths []string) error
 	if err := removeSeededPathsFromWorktree(worktreePath, paths, authenticateJJWorkspace); err != nil {
 		return err
 	}
-	return os.Remove(jjSeedAuthenticationPath(worktreePath))
+	return RemoveJJSeedAuthentication(worktreePath)
 }
 
 func PrepareJJSeededCleanup(worktreePath string) error {
