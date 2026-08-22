@@ -268,6 +268,7 @@ Every restored entry is marked `leased` because treehouse cannot know whether it
 
 Run `treehouse status` to inspect recovered entries.
 Treehouse cannot safely return these entries to the pool because recovery cannot reconstruct the trusted inventory of seeded ignored files.
+State written by versions without inventory integrity data is handled the same way, including state rewritten after a downgrade.
 After inspecting a recovered worktree, remove it by naming its exact path with `treehouse destroy <path> --include-leased --yes`.
 Bulk `destroy --all` and prune leave recovered entries alone.
 

@@ -2,6 +2,7 @@ package pool
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -41,7 +42,8 @@ type WorktreeEntry struct {
 	SeededPaths []string `json:"seeded_paths,omitempty"`
 	// SeedInventoryKnown distinguishes a verified empty inventory from an
 	// incomplete or recovered acquisition that must fail closed.
-	SeedInventoryKnown bool `json:"seed_inventory_known,omitempty"`
+	SeedInventoryKnown  bool   `json:"seed_inventory_known,omitempty"`
+	SeedInventoryDigest string `json:"seed_inventory_digest,omitempty"`
 }
 
 func newLeaseID() (string, error) {
@@ -57,7 +59,7 @@ type State struct {
 	Worktrees []WorktreeEntry `json:"worktrees"`
 }
 
-const stateVersion = 1
+const stateVersion = 2
 
 func stateFilePath(poolDir string) string {
 	return filepath.Join(poolDir, "treehouse-state.json")
@@ -107,15 +109,12 @@ func ReadState(poolDir string) (State, error) {
 	}
 	for i := range s.Worktrees {
 		wt := &s.Worktrees[i]
-		if s.Version == 0 && !wt.SeedInventoryKnown && !strings.HasPrefix(wt.LeaseHolder, "quarantined:") && wt.LeaseHolder != recoveredLeaseHolder {
-			wt.SeededPaths = []string{}
-			wt.SeedInventoryKnown = true
-		}
-		if !wt.SeedInventoryKnown || !validSeedInventory(wt.SeededPaths) {
+		if s.Version != stateVersion || !wt.SeedInventoryKnown || !validSeedInventory(wt.SeededPaths) || wt.SeedInventoryDigest != seedInventoryDigest(wt.SeededPaths) {
 			wt.Leased = true
 			wt.LeaseHolder = recoveredLeaseHolder
 			wt.SeededPaths = nil
 			wt.SeedInventoryKnown = false
+			wt.SeedInventoryDigest = ""
 			if wt.LeasedAt.IsZero() {
 				wt.LeasedAt = time.Now()
 			}
@@ -123,6 +122,24 @@ func ReadState(poolDir string) (State, error) {
 	}
 	s.Version = stateVersion
 	return recoverMissingStateEntries(poolDir, s)
+}
+
+func setSeedInventory(wt *WorktreeEntry, paths []string, known bool) {
+	wt.SeededPaths = paths
+	wt.SeedInventoryKnown = known
+	wt.SeedInventoryDigest = ""
+	if known {
+		wt.SeedInventoryDigest = seedInventoryDigest(paths)
+	}
+}
+
+func seedInventoryDigest(paths []string) string {
+	if len(paths) == 0 {
+		paths = []string{}
+	}
+	data, _ := json.Marshal(paths)
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:])
 }
 
 func validSeedInventory(paths []string) bool {

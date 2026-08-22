@@ -68,7 +68,7 @@ func TestReadState_RecoversJJWorktreeMissingFromValidState(t *testing.T) {
 	}
 }
 
-func TestReadState_LoadsPreIdentityLease(t *testing.T) {
+func TestReadState_QuarantinesPreIntegrityLease(t *testing.T) {
 	poolDir := t.TempDir()
 	stateJSON := `{
   "worktrees": [{
@@ -92,11 +92,8 @@ func TestReadState_LoadsPreIdentityLease(t *testing.T) {
 		t.Fatalf("ReadState returned %d entries, want 1", len(state.Worktrees))
 	}
 	lease := state.Worktrees[0]
-	if !lease.Leased || lease.LeaseID != "" || lease.LeaseHolder != "legacy-automation" || lease.LeasedAt.IsZero() {
-		t.Fatalf("pre-identity lease loaded incorrectly: %#v", lease)
-	}
-	if !lease.SeedInventoryKnown || len(lease.SeededPaths) != 0 {
-		t.Fatalf("state from before seeding was not migrated to an empty inventory: %#v", lease)
+	if !lease.Leased || lease.SeedInventoryKnown || lease.LeaseHolder != recoveredLeaseHolder {
+		t.Fatalf("pre-integrity lease was not quarantined: %#v", lease)
 	}
 }
 
@@ -152,6 +149,34 @@ func TestReadState_RecoversInvalidSeedInventory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(worktreePath, ".git")); err != nil {
 		t.Fatalf("invalid inventory damaged worktree marker: %v", err)
+	}
+}
+
+func TestReadState_QuarantinesInventoryWithoutValidDigest(t *testing.T) {
+	poolDir := t.TempDir()
+	worktreePath := makeFakeWorktree(t, poolDir, "1", "myrepo")
+	stateJSON := fmt.Sprintf(`{
+  "version": 2,
+  "worktrees": [{
+    "name": "1",
+    "path": %q,
+    "created_at": "2026-07-20T12:00:00Z",
+    "seeded_paths": ["ignored-user-file"],
+    "seed_inventory_known": true,
+    "seed_inventory_digest": "invalid"
+  }]
+}`, worktreePath)
+	if err := os.WriteFile(stateFilePath(poolDir), []byte(stateJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := state.Worktrees[0]
+	if !entry.Leased || entry.SeedInventoryKnown || entry.LeaseHolder != recoveredLeaseHolder {
+		t.Fatalf("unverified inventory was not quarantined: %#v", entry)
 	}
 }
 
