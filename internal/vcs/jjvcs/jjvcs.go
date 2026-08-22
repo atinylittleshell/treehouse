@@ -39,6 +39,8 @@ import (
 // Backend implements the vcs.Backend interface for jj repositories.
 type Backend struct{}
 
+var prepareJJSeededCleanup = gitvcs.PrepareJJSeededCleanup
+
 // New returns the jj backend.
 func New() *Backend { return &Backend{} }
 
@@ -198,8 +200,8 @@ func (*Backend) SeedWorktree(repoRoot, worktreePath string) ([]string, error) {
 	if err != nil || len(seeded) == 0 {
 		return seeded, err
 	}
-	if err := gitvcs.PrepareJJSeededCleanup(worktreePath); err != nil {
-		return nil, err
+	if err := prepareJJSeededCleanup(worktreePath); err != nil {
+		return seeded, err
 	}
 	return seeded, nil
 }
@@ -283,11 +285,14 @@ func (*Backend) RemoveWorktree(repoRoot, path string) error {
 			return fmt.Errorf("refusing to remove %s: main jj workspace, not a pooled secondary workspace", absPath)
 		}
 	}
+	if err := gitvcs.RemoveJJSeedAuthentication(absPath); err != nil {
+		return err
+	}
 	_, _ = runJJ(repoRoot, "workspace", "forget", workspaceNameFor(absPath))
 	if err := os.RemoveAll(absPath); err != nil {
 		return err
 	}
-	return gitvcs.RemoveJJSeedAuthentication(absPath)
+	return nil
 }
 
 // RemoveCleanWorktree removes a workspace, refusing if it has local changes.

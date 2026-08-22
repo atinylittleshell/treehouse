@@ -2,6 +2,7 @@ package gitvcs
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -736,7 +737,17 @@ func RemoveSeededPathsFromJJWorkspace(worktreePath string, paths []string) error
 }
 
 func PrepareJJSeededCleanup(worktreePath string) error {
-	if err := os.Link(filepath.Join(worktreePath, ".jj", "repo"), jjSeedAuthenticationPath(worktreePath)); err != nil {
+	authPath := jjSeedAuthenticationPath(worktreePath)
+	if err := os.MkdirAll(filepath.Dir(authPath), 0o700); err != nil {
+		return fmt.Errorf("creating jj seed authentication directory: %w", err)
+	}
+	markerPath := filepath.Join(worktreePath, ".jj", "repo")
+	if err := os.Link(markerPath, authPath); err != nil {
+		marker, markerErr := os.Stat(markerPath)
+		auth, authErr := os.Stat(authPath)
+		if markerErr == nil && authErr == nil && os.SameFile(marker, auth) {
+			return nil
+		}
 		return fmt.Errorf("authenticating seeded jj workspace: %w", err)
 	}
 	return nil
@@ -761,15 +772,28 @@ func AuthenticateJJSeededCleanup(worktreePath string) error {
 }
 
 func RemoveJJSeedAuthentication(worktreePath string) error {
-	err := os.Remove(jjSeedAuthenticationPath(worktreePath))
+	authPath := jjSeedAuthenticationPath(worktreePath)
+	auth, err := os.Stat(authPath)
 	if os.IsNotExist(err) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	marker, err := os.Stat(filepath.Join(worktreePath, ".jj", "repo"))
+	if err != nil || !os.SameFile(marker, auth) {
+		return fmt.Errorf("refusing to remove unowned jj seed authentication for %s", worktreePath)
+	}
+	return os.Remove(authPath)
 }
 
 func jjSeedAuthenticationPath(worktreePath string) string {
-	return worktreePath + ".treehouse-jj-seed-auth"
+	abs, err := filepath.Abs(worktreePath)
+	if err != nil {
+		abs = filepath.Clean(worktreePath)
+	}
+	digest := sha256.Sum256([]byte(abs))
+	return filepath.Join(filepath.Dir(abs), ".treehouse-jj-seed-auth", fmt.Sprintf("%x", digest[:16]))
 }
 
 func removeSeededPathsFromWorktree(worktreePath string, paths []string, authenticate func(*os.Root, string) error) error {

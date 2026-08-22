@@ -993,6 +993,49 @@ func TestRemoveSeededPathsRejectsCopiedJJWorkspaceMarker(t *testing.T) {
 	assertTestFile(t, worktree, "secret.env", "keep me\n")
 }
 
+func TestPrepareJJSeededCleanupDoesNotClaimAdjacentUserFile(t *testing.T) {
+	worktree := filepath.Join(t.TempDir(), "worktree")
+	marker := filepath.Join(worktree, ".jj", "repo")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte("store"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adjacent := worktree + ".treehouse-jj-seed-auth"
+	if err := os.WriteFile(adjacent, []byte("user data\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := PrepareJJSeededCleanup(worktree); err != nil {
+		t.Fatalf("PrepareJJSeededCleanup failed: %v", err)
+	}
+	assertTestFile(t, filepath.Dir(adjacent), filepath.Base(adjacent), "user data\n")
+}
+
+func TestRemoveJJSeedAuthenticationRejectsUnownedFile(t *testing.T) {
+	worktree := filepath.Join(t.TempDir(), "worktree")
+	marker := filepath.Join(worktree, ".jj", "repo")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte("store"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	authPath := jjSeedAuthenticationPath(worktree)
+	if err := os.MkdirAll(filepath.Dir(authPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(authPath, []byte("user data\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RemoveJJSeedAuthentication(worktree); err == nil {
+		t.Fatal("expected unowned authentication file to be rejected")
+	}
+	assertTestFile(t, filepath.Dir(authPath), filepath.Base(authPath), "user data\n")
+}
+
 func TestSeedWorktreeRefusesDestinationSymlink(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "config/settings.env\n")
 	writeTestFile(t, repo, "config/settings.env", "seeded\n")

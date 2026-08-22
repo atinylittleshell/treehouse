@@ -202,6 +202,27 @@ func TestSeedWorktreeCopiesIgnoredManifestSelection(t *testing.T) {
 	}
 }
 
+func TestSeedWorktreePreservesInventoryWhenAuthenticationFails(t *testing.T) {
+	requireJJ(t)
+	repoDir := newLocalRepo(t)
+	writeFile(t, filepath.Join(repoDir, ".gitignore"), "*.env\n")
+	writeFile(t, filepath.Join(repoDir, ".worktreeinclude"), "selected.env\n")
+	writeFile(t, filepath.Join(repoDir, "selected.env"), "secret\n")
+	mustJJ(t, repoDir, "commit", "-m", "add seed manifest")
+	worktree := addWorkspace(t, repoDir)
+	oldPrepare := prepareJJSeededCleanup
+	prepareJJSeededCleanup = func(string) error { return errors.New("authentication failed") }
+	t.Cleanup(func() { prepareJJSeededCleanup = oldPrepare })
+
+	seeded, err := New().SeedWorktree(repoDir, worktree)
+	if err == nil {
+		t.Fatal("expected authentication failure")
+	}
+	if len(seeded) != 1 || seeded[0] != "selected.env" {
+		t.Fatalf("seeded paths = %v, want [selected.env]", seeded)
+	}
+}
+
 func TestResetWorktreeToRefFailurePreservesSeededPaths(t *testing.T) {
 	worktree := t.TempDir()
 	seed := filepath.Join(worktree, "selected.env")
