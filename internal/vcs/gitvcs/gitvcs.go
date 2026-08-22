@@ -199,9 +199,12 @@ func SeedWorktreeWithInventory(repoRoot, worktreePath string) ([]string, error) 
 	if err != nil {
 		return nil, err
 	}
-	ignoreCase, _ := runGit(worktreePath, "config", "--bool", "core.ignoreCase")
+	ignoreCase, err := worktreeCaseInsensitive(worktreePath)
+	if err != nil {
+		return nil, err
+	}
 	canonical := func(name string) string {
-		if ignoreCase == "true" {
+		if ignoreCase {
 			return strings.ToLower(name)
 		}
 		return name
@@ -319,6 +322,23 @@ func SeedWorktreeWithInventory(repoRoot, worktreePath string) ([]string, error) 
 		}
 	}
 	return copied, nil
+}
+
+func worktreeCaseInsensitive(worktreePath string) (bool, error) {
+	marker, err := os.Stat(filepath.Join(worktreePath, ".git"))
+	if err != nil {
+		return false, err
+	}
+	// The filesystem, rather than a mutable Git setting, decides whether two
+	// differently cased destination paths can refer to the same tracked file.
+	alias, err := os.Stat(filepath.Join(worktreePath, ".GIT"))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(marker, alias), nil
 }
 
 func selectedSeedPaths(repoRoot string) ([]byte, error) {

@@ -722,7 +722,7 @@ func TestSeedWorktreeDoesNotCopyFilesIgnoredOutsideManifest(t *testing.T) {
 	}
 }
 
-func TestSeedWorktreeHonorsCaseInsensitiveTrackedPaths(t *testing.T) {
+func TestSeedWorktreeHonorsCaseInsensitiveTrackedPathsWhenGitConfigIsFalse(t *testing.T) {
 	base := t.TempDir()
 	repo := filepath.Join(base, "repo")
 	worktree := filepath.Join(base, "worktree")
@@ -740,7 +740,15 @@ func TestSeedWorktreeHonorsCaseInsensitiveTrackedPaths(t *testing.T) {
 	mustGit(t, repo, "commit", "-m", "seed differently cased config")
 	writeTestFile(t, repo, "config.env", "ignored\n")
 	mustGit(t, repo, "worktree", "add", "--detach", worktree, "main")
-	mustGit(t, worktree, "config", "core.ignoreCase", "true")
+	trackedInfo, err := os.Stat(filepath.Join(worktree, "Config.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasInfo, err := os.Stat(filepath.Join(worktree, "config.env"))
+	if err != nil || !os.SameFile(trackedInfo, aliasInfo) {
+		t.Skip("case-insensitive filesystem required")
+	}
+	mustGit(t, worktree, "config", "core.ignoreCase", "false")
 
 	if err := SeedWorktree(repo, worktree); err != nil {
 		t.Fatal(err)
