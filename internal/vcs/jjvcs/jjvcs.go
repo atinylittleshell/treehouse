@@ -194,7 +194,14 @@ func (*Backend) SeedWorktree(repoRoot, worktreePath string) ([]string, error) {
 		return nil, err
 	}
 	gitDir := filepath.Join(repoRoot, ".jj", "repo", "store", "git")
-	return gitvcs.SeedWorktreeWithInventoryFromGitStore(repoRoot, worktreePath, gitDir, head)
+	seeded, err := gitvcs.SeedWorktreeWithInventoryFromGitStore(repoRoot, worktreePath, gitDir, head)
+	if err != nil || len(seeded) == 0 {
+		return seeded, err
+	}
+	if err := gitvcs.PrepareJJSeededCleanup(worktreePath); err != nil {
+		return nil, err
+	}
+	return seeded, nil
 }
 
 // makeRepoPointerAbsolute rewrites the workspace's .jj/repo store pointer to
@@ -277,7 +284,10 @@ func (*Backend) RemoveWorktree(repoRoot, path string) error {
 		}
 	}
 	_, _ = runJJ(repoRoot, "workspace", "forget", workspaceNameFor(absPath))
-	return os.RemoveAll(absPath)
+	if err := os.RemoveAll(absPath); err != nil {
+		return err
+	}
+	return gitvcs.RemoveJJSeedAuthentication(absPath)
 }
 
 // RemoveCleanWorktree removes a workspace, refusing if it has local changes.
@@ -317,6 +327,11 @@ func (b *Backend) ResetWorktree(worktreePath, branch string) error {
 }
 
 func (b *Backend) ResetWorktreeWithSeededPaths(worktreePath, branch string, seededPaths []string) error {
+	if len(seededPaths) > 0 {
+		if err := gitvcs.AuthenticateJJSeededCleanup(worktreePath); err != nil {
+			return err
+		}
+	}
 	ref, err := resolveResetRef(worktreePath, branch)
 	if err != nil {
 		return err
@@ -406,6 +421,11 @@ func (b *Backend) ResetWorktreeToRef(worktreePath, ref, expectedHead string, req
 }
 
 func (b *Backend) ResetWorktreeToRefWithSeededPaths(worktreePath, ref, expectedHead string, requireClean bool, seededPaths []string) error {
+	if len(seededPaths) > 0 {
+		if err := gitvcs.AuthenticateJJSeededCleanup(worktreePath); err != nil {
+			return err
+		}
+	}
 	if err := b.ResetWorktreeToRef(worktreePath, ref, expectedHead, requireClean); err != nil {
 		return err
 	}

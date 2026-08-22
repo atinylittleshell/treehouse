@@ -963,6 +963,36 @@ func TestRemoveSeededPathsRejectsUnregisteredReplacementDirectory(t *testing.T) 
 	assertTestFile(t, replacement, "secret.env", "keep me\n")
 }
 
+func TestRemoveSeededPathsRejectsCopiedJJWorkspaceMarker(t *testing.T) {
+	parent := t.TempDir()
+	worktree := filepath.Join(parent, "worktree")
+	marker := filepath.Join(worktree, ".jj", "repo")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte("store"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareJJSeededCleanup(worktree); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(worktree); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte("store"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, worktree, "secret.env", "keep me\n")
+
+	if err := RemoveSeededPathsFromJJWorkspace(worktree, []string{"secret.env"}); err == nil {
+		t.Fatal("expected cleanup to reject a copied jj workspace marker")
+	}
+	assertTestFile(t, worktree, "secret.env", "keep me\n")
+}
+
 func TestSeedWorktreeRefusesDestinationSymlink(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "config/settings.env\n")
 	writeTestFile(t, repo, "config/settings.env", "seeded\n")

@@ -726,7 +726,50 @@ func RemoveSeededPaths(worktreePath string, paths []string) error {
 }
 
 func RemoveSeededPathsFromJJWorkspace(worktreePath string, paths []string) error {
-	return removeSeededPathsFromWorktree(worktreePath, paths, authenticateJJWorkspace)
+	if len(paths) == 0 {
+		return nil
+	}
+	if err := removeSeededPathsFromWorktree(worktreePath, paths, authenticateJJWorkspace); err != nil {
+		return err
+	}
+	return os.Remove(jjSeedAuthenticationPath(worktreePath))
+}
+
+func PrepareJJSeededCleanup(worktreePath string) error {
+	if err := os.Link(filepath.Join(worktreePath, ".jj", "repo"), jjSeedAuthenticationPath(worktreePath)); err != nil {
+		return fmt.Errorf("authenticating seeded jj workspace: %w", err)
+	}
+	return nil
+}
+
+func AuthenticateJJSeededCleanup(worktreePath string) error {
+	worktree, err := openDirectoryNoFollow(worktreePath)
+	if err != nil {
+		return err
+	}
+	defer worktree.Close()
+	expected, err := worktree.Stat()
+	if err != nil {
+		return err
+	}
+	root, pinned, err := openCleanupRoot(worktreePath, expected, authenticateJJWorkspace)
+	if err != nil {
+		return err
+	}
+	root.Close()
+	return pinned.Close()
+}
+
+func RemoveJJSeedAuthentication(worktreePath string) error {
+	err := os.Remove(jjSeedAuthenticationPath(worktreePath))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
+func jjSeedAuthenticationPath(worktreePath string) string {
+	return worktreePath + ".treehouse-jj-seed-auth"
 }
 
 func removeSeededPathsFromWorktree(worktreePath string, paths []string, authenticate func(*os.Root, string) error) error {
@@ -775,19 +818,17 @@ func authenticateJJWorkspace(root *os.Root, worktreePath string) error {
 	if err != nil || !repo.Mode().IsRegular() {
 		return fmt.Errorf("refusing to clean unregistered worktree %s", worktreePath)
 	}
-	contents, err := root.ReadFile(filepath.Join(".jj", "repo"))
+	markerFile, err := root.Open(filepath.Join(".jj", "repo"))
 	if err != nil {
 		return err
 	}
-	storePath := strings.TrimSpace(string(contents))
-	if storePath == "" {
-		return fmt.Errorf("refusing to clean unregistered worktree %s", worktreePath)
+	defer markerFile.Close()
+	markerInfo, err := markerFile.Stat()
+	if err != nil {
+		return err
 	}
-	if !filepath.IsAbs(storePath) {
-		storePath = filepath.Join(worktreePath, ".jj", storePath)
-	}
-	store, err := os.Stat(filepath.Clean(storePath))
-	if err != nil || !store.IsDir() {
+	authInfo, err := os.Stat(jjSeedAuthenticationPath(worktreePath))
+	if err != nil || !os.SameFile(markerInfo, authInfo) {
 		return fmt.Errorf("refusing to clean unregistered worktree %s", worktreePath)
 	}
 	return nil

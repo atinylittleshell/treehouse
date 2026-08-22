@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kunchenguid/treehouse/internal/vcs/gitvcs"
 )
 
 // requireJJ skips the test when jj is not installed, so the suite stays green
@@ -238,6 +240,9 @@ func TestResetWorktreeWithSeededPathsRemovesSeedFromWorkspace(t *testing.T) {
 	worktree := addWorkspace(t, repoDir)
 	seed := filepath.Join(worktree, "selected.env")
 	writeFile(t, seed, "secret\n")
+	if err := gitvcs.PrepareJJSeededCleanup(worktree); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := New().ResetWorktreeWithSeededPaths(worktree, "main", []string{"selected.env"}); err != nil {
 		t.Fatalf("ResetWorktreeWithSeededPaths failed: %v", err)
