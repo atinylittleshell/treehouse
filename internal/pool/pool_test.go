@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/treehouse/internal/process"
+	"github.com/kunchenguid/treehouse/internal/vcs/gitvcs"
 )
 
 func setupRepo(t *testing.T) (repoDir, poolDir string) {
@@ -42,6 +43,65 @@ func setupRepo(t *testing.T) (repoDir, poolDir string) {
 	runGit(t, repoDir, "commit", "-m", "initial")
 	runGit(t, repoDir, "push", "-u", "origin", "main")
 	return repoDir, poolDir
+}
+
+func TestStaleJJAuthenticationRequiresSignedInventory(t *testing.T) {
+	base := t.TempDir()
+	poolDir := filepath.Join(base, "pool")
+	if err := os.MkdirAll(poolDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	worktree := filepath.Join(base, "slot", "worktree")
+	marker := filepath.Join(worktree, ".jj", "repo")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte("store"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := gitvcs.PrepareJJSeededCleanup(worktree); err != nil {
+		t.Fatal(err)
+	}
+	authDir := filepath.Join(filepath.Dir(worktree), ".treehouse-jj-seed-auth")
+	authEntries, err := os.ReadDir(authDir)
+	if err != nil || len(authEntries) != 1 {
+		t.Fatalf("authentication entries = %v, %v", authEntries, err)
+	}
+	authPath := filepath.Join(authDir, authEntries[0].Name())
+	if err := os.RemoveAll(worktree); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(authPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(authPath, []byte("forged user data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := WorktreeEntry{Name: "slot", Path: worktree}
+	setSeedInventory(&entry, []string{"selected.env"}, true)
+	if _, err := ensureStateKey(poolDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeAuthenticatedStaleJJSeedState(poolDir, State{Worktrees: []WorktreeEntry{entry}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(authPath); err != nil {
+		t.Fatalf("unsigned state removed authentication file: %v", err)
+	}
+	if err := WriteState(poolDir, State{Worktrees: []WorktreeEntry{entry}}); err != nil {
+		t.Fatal(err)
+	}
+	signed, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := removeAuthenticatedStaleJJSeedState(poolDir, signed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(authPath); !os.IsNotExist(err) {
+		t.Fatalf("signed state did not remove managed authentication file: %v", err)
+	}
 }
 
 func setupLocalRepo(t *testing.T) (repoDir, poolDir string) {

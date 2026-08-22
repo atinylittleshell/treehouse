@@ -395,6 +395,10 @@ func SeedWorktree(repoRoot, worktreePath string) ([]string, error) {
 	return backendFor(repoRoot).SeedWorktree(repoRoot, worktreePath)
 }
 
+func RemoveStaleJJSeedAuthentication(worktreePath string) error {
+	return gitvcs.RemoveStaleJJSeedAuthentication(worktreePath)
+}
+
 // ResetWorktreeToRef resets worktreePath to an already resolved commit.
 func ResetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean bool) error {
 	b, err := destructiveBackendForWorktree(worktreePath)

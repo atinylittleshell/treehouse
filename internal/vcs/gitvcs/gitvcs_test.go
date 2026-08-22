@@ -1058,38 +1058,11 @@ func TestRemoveStaleJJSeedAuthenticationAllowsWorkspaceRecreation(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	if err := RemoveStaleJJSeedAuthentication(repo, worktree); err != nil {
+	if err := RemoveStaleJJSeedAuthentication(worktree); err != nil {
 		t.Fatalf("RemoveStaleJJSeedAuthentication failed: %v", err)
 	}
 	if _, err := os.Stat(jjSeedAuthenticationPath(worktree)); !os.IsNotExist(err) {
 		t.Fatalf("stale authentication still exists: %v", err)
-	}
-}
-
-func TestRemoveStaleJJSeedAuthenticationRejectsWrongStore(t *testing.T) {
-	parent := t.TempDir()
-	repoStore := filepath.Join(parent, "repo", ".jj", "repo")
-	otherStore := filepath.Join(parent, "other", ".jj", "repo")
-	if err := os.MkdirAll(repoStore, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(otherStore, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	worktree := filepath.Join(parent, "worktree")
-	authPath := jjSeedAuthenticationPath(worktree)
-	if err := os.MkdirAll(filepath.Dir(authPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(authPath, []byte(otherStore), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := RemoveStaleJJSeedAuthentication(filepath.Join(parent, "repo"), worktree); err == nil {
-		t.Fatal("expected authentication for another store to be rejected")
-	}
-	if _, err := os.Stat(authPath); err != nil {
-		t.Fatalf("unowned authentication was removed: %v", err)
 	}
 }
 

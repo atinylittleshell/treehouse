@@ -115,7 +115,7 @@ func ReadState(poolDir string) (State, error) {
 	key, keyErr := readStateKey(poolDir)
 	for i := range s.Worktrees {
 		wt := &s.Worktrees[i]
-		if s.Version != stateVersion || keyErr != nil || !wt.SeedInventoryKnown || !validSeedInventory(wt.SeededPaths) || !hmac.Equal([]byte(wt.SeedInventoryDigest), []byte(seedInventoryDigest(key, *wt))) {
+		if s.Version != stateVersion || keyErr != nil || !validSeedInventoryDigest(key, *wt) {
 			wt.Leased = true
 			wt.LeaseHolder = recoveredLeaseHolder
 			wt.SeededPaths = nil
@@ -128,6 +128,10 @@ func ReadState(poolDir string) (State, error) {
 	}
 	s.Version = stateVersion
 	return recoverMissingStateEntries(poolDir, s)
+}
+
+func validSeedInventoryDigest(key []byte, wt WorktreeEntry) bool {
+	return wt.SeedInventoryKnown && validSeedInventory(wt.SeededPaths) && hmac.Equal([]byte(wt.SeedInventoryDigest), []byte(seedInventoryDigest(key, wt)))
 }
 
 func setSeedInventory(wt *WorktreeEntry, paths []string, known bool) {

@@ -174,6 +174,9 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			return err
 		}
 
+		if err := removeAuthenticatedStaleJJSeedState(poolDir, state); err != nil {
+			return err
+		}
 		state = healState(state)
 
 		// Try to find an available worktree (clean, not in-use, not leased,
@@ -621,6 +624,32 @@ func healState(state State) State {
 	}
 	state.Worktrees = healed
 	return state
+}
+
+func removeAuthenticatedStaleJJSeedState(poolDir string, state State) error {
+	var key []byte
+	for _, wt := range state.Worktrees {
+		if !wt.SeedInventoryKnown || wt.SeedInventoryDigest == "" || len(wt.SeededPaths) == 0 {
+			continue
+		}
+		if _, err := os.Stat(wt.Path); !os.IsNotExist(err) {
+			continue
+		}
+		if key == nil {
+			var err error
+			key, err = readStateKey(poolDir)
+			if err != nil {
+				return err
+			}
+		}
+		if !validSeedInventoryDigest(key, wt) {
+			continue
+		}
+		if err := vcs.RemoveStaleJJSeedAuthentication(wt.Path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ownerAlive(wt WorktreeEntry) bool {

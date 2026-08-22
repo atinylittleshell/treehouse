@@ -172,9 +172,6 @@ func (*Backend) GetRemoteURL(repoRoot string) (string, error) {
 // re-used paths). Like git worktrees, registrations are effectively
 // path-keyed: a live workspace at a different path is never deregistered.
 func (b *Backend) AddWorktree(repoRoot, path, branch string) error {
-	if err := gitvcs.RemoveStaleJJSeedAuthentication(repoRoot, path); err != nil {
-		return err
-	}
 	name := workspaceNameFor(path)
 	// Best-effort: forgetting a name that does not exist is a no-op in jj.
 	_, _ = runJJ(repoRoot, "workspace", "forget", name)
