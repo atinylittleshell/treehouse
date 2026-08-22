@@ -863,7 +863,7 @@ func TestLegacySeedCleanupPreservesUnignoredManifestSelection(t *testing.T) {
 	mustGit(t, worktree, "reset", "--hard", "main")
 	writeTestFile(t, worktree, "notes.txt", "keep me\n")
 
-	if err := removeSeededFiles(worktree); err != nil {
+	if err := removeSeededFiles(worktree, "HEAD"); err != nil {
 		t.Fatal(err)
 	}
 	assertTestFile(t, worktree, "notes.txt", "keep me\n")
@@ -879,7 +879,7 @@ func TestLegacySeedCleanupRemovesSeedWhoseSourceWasDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := removeSeededFiles(worktree); err != nil {
+	if err := removeSeededFiles(worktree, "HEAD"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(worktree, "secret.env")); !os.IsNotExist(err) {
