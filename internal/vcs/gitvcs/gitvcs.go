@@ -787,7 +787,11 @@ func RemoveJJSeedAuthentication(worktreePath string) error {
 	return os.Remove(authPath)
 }
 
-func RemoveStaleJJSeedAuthentication(worktreePath string) error {
+func JJSeedAuthenticationIdentity(worktreePath string) (string, error) {
+	return fileIdentity(jjSeedAuthenticationPath(worktreePath))
+}
+
+func RemoveStaleJJSeedAuthentication(worktreePath, expectedIdentity string) error {
 	authPath := jjSeedAuthenticationPath(worktreePath)
 	auth, err := os.Lstat(authPath)
 	if os.IsNotExist(err) {
@@ -797,6 +801,10 @@ func RemoveStaleJJSeedAuthentication(worktreePath string) error {
 		return err
 	}
 	if !auth.Mode().IsRegular() {
+		return fmt.Errorf("refusing to remove unowned jj seed authentication for %s", worktreePath)
+	}
+	identity, err := fileIdentity(authPath)
+	if err != nil || identity != expectedIdentity {
 		return fmt.Errorf("refusing to remove unowned jj seed authentication for %s", worktreePath)
 	}
 	if _, err := os.Stat(worktreePath); err == nil || !os.IsNotExist(err) {

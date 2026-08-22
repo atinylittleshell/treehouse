@@ -68,6 +68,11 @@ func TestStaleJJAuthenticationRequiresSignedInventory(t *testing.T) {
 		t.Fatalf("authentication entries = %v, %v", authEntries, err)
 	}
 	authPath := filepath.Join(authDir, authEntries[0].Name())
+	entry := WorktreeEntry{Name: "slot", Path: worktree}
+	setSeedInventory(&entry, []string{"selected.env"}, true)
+	if err := WriteState(poolDir, State{Worktrees: []WorktreeEntry{entry}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.RemoveAll(worktree); err != nil {
 		t.Fatal(err)
 	}
@@ -78,19 +83,11 @@ func TestStaleJJAuthenticationRequiresSignedInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entry := WorktreeEntry{Name: "slot", Path: worktree}
-	setSeedInventory(&entry, []string{"selected.env"}, true)
-	if _, err := ensureStateKey(poolDir); err != nil {
-		t.Fatal(err)
-	}
 	if err := removeAuthenticatedStaleJJSeedState(poolDir, State{Worktrees: []WorktreeEntry{entry}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(authPath); err != nil {
 		t.Fatalf("unsigned state removed authentication file: %v", err)
-	}
-	if err := WriteState(poolDir, State{Worktrees: []WorktreeEntry{entry}}); err != nil {
-		t.Fatal(err)
 	}
 	signed, err := ReadState(poolDir)
 	if err != nil {
@@ -99,18 +96,18 @@ func TestStaleJJAuthenticationRequiresSignedInventory(t *testing.T) {
 	if len(signed.Worktrees) != 1 {
 		t.Fatalf("signed state entries = %d, want 1", len(signed.Worktrees))
 	}
-	if _, err := List(poolDir); err != nil {
-		t.Fatal(err)
+	if _, err := List(poolDir); err == nil {
+		t.Fatal("expected forged authentication identity to fail closed")
 	}
-	if _, err := os.Stat(authPath); !os.IsNotExist(err) {
-		t.Fatalf("signed state did not remove managed authentication file: %v", err)
+	if _, err := os.Stat(authPath); err != nil {
+		t.Fatalf("forged authentication file was removed: %v", err)
 	}
 	healed, err := ReadState(poolDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(healed.Worktrees) != 0 {
-		t.Fatalf("missing workspace remained after status: %#v", healed.Worktrees)
+	if len(healed.Worktrees) != 1 {
+		t.Fatalf("signed authorization was discarded after failed cleanup: %#v", healed.Worktrees)
 	}
 }
 

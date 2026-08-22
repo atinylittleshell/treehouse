@@ -1054,11 +1054,15 @@ func TestRemoveStaleJJSeedAuthenticationAllowsWorkspaceRecreation(t *testing.T) 
 	if err := PrepareJJSeededCleanup(worktree); err != nil {
 		t.Fatal(err)
 	}
+	identity, err := JJSeedAuthenticationIdentity(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.RemoveAll(worktree); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := RemoveStaleJJSeedAuthentication(worktree); err != nil {
+	if err := RemoveStaleJJSeedAuthentication(worktree, identity); err != nil {
 		t.Fatalf("RemoveStaleJJSeedAuthentication failed: %v", err)
 	}
 	if _, err := os.Stat(jjSeedAuthenticationPath(worktree)); !os.IsNotExist(err) {

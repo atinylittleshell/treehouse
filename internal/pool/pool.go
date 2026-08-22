@@ -635,7 +635,7 @@ func healState(poolDir string, state State) (State, error) {
 func removeAuthenticatedStaleJJSeedState(poolDir string, state State) error {
 	var key []byte
 	for _, wt := range state.Worktrees {
-		if !wt.SeedInventoryKnown || wt.SeedInventoryDigest == "" || len(wt.SeededPaths) == 0 {
+		if !wt.SeedInventoryKnown || wt.SeedInventoryDigest == "" || wt.SeedBackend != "jj" || wt.SeedAuthIdentity == "" || len(wt.SeededPaths) == 0 {
 			continue
 		}
 		if _, err := os.Stat(wt.Path); !os.IsNotExist(err) {
@@ -651,7 +651,7 @@ func removeAuthenticatedStaleJJSeedState(poolDir string, state State) error {
 		if !validSeedInventoryDigest(key, wt) {
 			continue
 		}
-		if err := vcs.RemoveStaleJJSeedAuthentication(wt.Path); err != nil {
+		if err := vcs.RemoveStaleJJSeedAuthentication(wt.Path, wt.SeedAuthIdentity); err != nil {
 			return err
 		}
 	}

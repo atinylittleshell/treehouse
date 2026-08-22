@@ -45,6 +45,8 @@ type WorktreeEntry struct {
 	// incomplete or recovered acquisition that must fail closed.
 	SeedInventoryKnown  bool   `json:"seed_inventory_known,omitempty"`
 	SeedInventoryDigest string `json:"seed_inventory_digest,omitempty"`
+	SeedBackend         string `json:"seed_backend,omitempty"`
+	SeedAuthIdentity    string `json:"seed_auth_identity,omitempty"`
 }
 
 func newLeaseID() (string, error) {
@@ -60,7 +62,7 @@ type State struct {
 	Worktrees []WorktreeEntry `json:"worktrees"`
 }
 
-const stateVersion = 3
+const stateVersion = 4
 
 func stateFilePath(poolDir string) string {
 	return filepath.Join(poolDir, "treehouse-state.json")
@@ -121,6 +123,8 @@ func ReadState(poolDir string) (State, error) {
 			wt.SeededPaths = nil
 			wt.SeedInventoryKnown = false
 			wt.SeedInventoryDigest = ""
+			wt.SeedBackend = ""
+			wt.SeedAuthIdentity = ""
 			if wt.LeasedAt.IsZero() {
 				wt.LeasedAt = time.Now()
 			}
@@ -131,13 +135,15 @@ func ReadState(poolDir string) (State, error) {
 }
 
 func validSeedInventoryDigest(key []byte, wt WorktreeEntry) bool {
-	return wt.SeedInventoryKnown && validSeedInventory(wt.SeededPaths) && hmac.Equal([]byte(wt.SeedInventoryDigest), []byte(seedInventoryDigest(key, wt)))
+	return wt.SeedInventoryKnown && validSeedInventory(wt.SeededPaths) && validSeedMetadata(wt) && hmac.Equal([]byte(wt.SeedInventoryDigest), []byte(seedInventoryDigest(key, wt)))
 }
 
 func setSeedInventory(wt *WorktreeEntry, paths []string, known bool) {
 	wt.SeededPaths = paths
 	wt.SeedInventoryKnown = known
 	wt.SeedInventoryDigest = ""
+	wt.SeedBackend = ""
+	wt.SeedAuthIdentity = ""
 }
 
 func seedInventoryDigest(key []byte, wt WorktreeEntry) string {
@@ -148,7 +154,9 @@ func seedInventoryDigest(key []byte, wt WorktreeEntry) string {
 		Name        string   `json:"name"`
 		Path        string   `json:"path"`
 		SeededPaths []string `json:"seeded_paths"`
-	}{wt.Name, filepath.Clean(wt.Path), wt.SeededPaths})
+		SeedBackend string   `json:"seed_backend"`
+		SeedAuthID  string   `json:"seed_auth_identity"`
+	}{wt.Name, filepath.Clean(wt.Path), wt.SeededPaths, wt.SeedBackend, wt.SeedAuthIdentity})
 	digest := hmac.New(sha256.New, key)
 	_, _ = digest.Write(data)
 	return hex.EncodeToString(digest.Sum(nil))
@@ -220,6 +228,18 @@ func prepareStateForWrite(poolDir string, s State) (State, error) {
 			if !validSeedInventory(wt.SeededPaths) {
 				return State{}, fmt.Errorf("invalid seeded path inventory")
 			}
+			if len(wt.SeededPaths) > 0 && wt.SeedBackend == "" {
+				wt.SeedBackend = vcs.WorktreeBackendName(wt.Path)
+				if wt.SeedBackend == "jj" {
+					wt.SeedAuthIdentity, err = vcs.JJSeedAuthenticationIdentity(wt.Path)
+					if err != nil {
+						return State{}, err
+					}
+				}
+			}
+			if !validSeedMetadata(*wt) {
+				return State{}, fmt.Errorf("invalid seeded authentication metadata")
+			}
 			wt.SeedInventoryDigest = seedInventoryDigest(key, *wt)
 		} else {
 			wt.SeedInventoryDigest = ""
@@ -227,6 +247,13 @@ func prepareStateForWrite(poolDir string, s State) (State, error) {
 	}
 	s.Version = stateVersion
 	return s, nil
+}
+
+func validSeedMetadata(wt WorktreeEntry) bool {
+	if len(wt.SeededPaths) == 0 {
+		return wt.SeedBackend == "" && wt.SeedAuthIdentity == ""
+	}
+	return (wt.SeedBackend == "git" && wt.SeedAuthIdentity == "") || (wt.SeedBackend == "jj" && wt.SeedAuthIdentity != "")
 }
 
 func validSeedInventory(paths []string) bool {
