@@ -317,12 +317,21 @@ func (b *Backend) ResetWorktree(worktreePath, branch string) error {
 }
 
 func (b *Backend) ResetWorktreeWithSeededPaths(worktreePath, branch string, seededPaths []string) error {
-	if seededPaths != nil {
-		if err := gitvcs.RemoveSeededPaths(worktreePath, seededPaths); err != nil {
-			return err
-		}
+	ref, err := resolveResetRef(worktreePath, branch)
+	if err != nil {
+		return err
 	}
-	return b.ResetWorktree(worktreePath, branch)
+	head, err := worktreeHead(worktreePath)
+	if err != nil {
+		return err
+	}
+	if err := b.ResetWorktreeToRef(worktreePath, ref, head, false); err != nil {
+		return err
+	}
+	if seededPaths == nil {
+		return nil
+	}
+	return gitvcs.RemoveSeededPaths(worktreePath, seededPaths)
 }
 
 // ResetWorktreeToRef resets worktreePath to an already resolved commit.
@@ -397,12 +406,13 @@ func (b *Backend) ResetWorktreeToRef(worktreePath, ref, expectedHead string, req
 }
 
 func (b *Backend) ResetWorktreeToRefWithSeededPaths(worktreePath, ref, expectedHead string, requireClean bool, seededPaths []string) error {
-	if seededPaths != nil {
-		if err := gitvcs.RemoveSeededPaths(worktreePath, seededPaths); err != nil {
-			return err
-		}
+	if err := b.ResetWorktreeToRef(worktreePath, ref, expectedHead, requireClean); err != nil {
+		return err
 	}
-	return b.ResetWorktreeToRef(worktreePath, ref, expectedHead, requireClean)
+	if seededPaths == nil {
+		return nil
+	}
+	return gitvcs.RemoveSeededPaths(worktreePath, seededPaths)
 }
 
 func (b *Backend) parkedOnRef(worktreePath, ref string) (bool, error) {

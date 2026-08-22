@@ -200,6 +200,36 @@ func TestSeedWorktreeCopiesIgnoredManifestSelection(t *testing.T) {
 	}
 }
 
+func TestResetWorktreeToRefFailurePreservesSeededPaths(t *testing.T) {
+	worktree := t.TempDir()
+	seed := filepath.Join(worktree, "selected.env")
+	writeFile(t, seed, "keep\n")
+
+	err := New().ResetWorktreeToRefWithSeededPaths(worktree, "target", "invalid", true, []string{"selected.env"})
+	if err == nil {
+		t.Fatal("expected guarded reset to fail")
+	}
+	data, readErr := os.ReadFile(seed)
+	if readErr != nil || string(data) != "keep\n" {
+		t.Fatalf("seeded file = %q, %v", data, readErr)
+	}
+}
+
+func TestResetWorktreeResolutionFailurePreservesSeededPaths(t *testing.T) {
+	worktree := t.TempDir()
+	seed := filepath.Join(worktree, "selected.env")
+	writeFile(t, seed, "keep\n")
+
+	err := New().ResetWorktreeWithSeededPaths(worktree, "main", []string{"selected.env"})
+	if err == nil {
+		t.Fatal("expected reset resolution to fail")
+	}
+	data, readErr := os.ReadFile(seed)
+	if readErr != nil || string(data) != "keep\n" {
+		t.Fatalf("seeded file = %q, %v", data, readErr)
+	}
+}
+
 func TestFindMainRepoRootFromWorkspace(t *testing.T) {
 	requireJJ(t)
 	repoDir := newLocalRepo(t)
