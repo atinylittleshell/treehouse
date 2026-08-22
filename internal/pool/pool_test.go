@@ -452,6 +452,41 @@ func TestAcquire_ReusedRepeatedStateWriteFailureKeepsSeedInventoryUnknown(t *tes
 	}
 }
 
+func TestRelease_RejectsFailedSeedingQuarantineWithUnknownInventory(t *testing.T) {
+	repoDir, poolDir := setupLocalRepo(t)
+	wtPath, err := Acquire(repoDir, poolDir, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Worktrees[0].SeedInventoryKnown = false
+	state.Worktrees[0].Leased = true
+	state.Worktrees[0].LeaseHolder = "quarantined: worktree seeding failed"
+	if err := WriteState(poolDir, state); err != nil {
+		t.Fatal(err)
+	}
+	partialPath := filepath.Join(wtPath, "partial.env")
+	if err := os.WriteFile(partialPath, []byte("partial\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Release(poolDir, wtPath); err == nil {
+		t.Fatal("Release succeeded with a failed-seeding quarantine and unknown inventory")
+	}
+	state, err = ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Worktrees[0].Leased || state.Worktrees[0].SeedInventoryKnown {
+		t.Fatalf("unsafe quarantine was cleared: %#v", state.Worktrees[0])
+	}
+	assertFileContents(t, partialPath, "partial\n")
+}
+
 func TestAcquire_ReusedCommittedFinalStateWriteErrorReturnsAcquisition(t *testing.T) {
 	repoDir, poolDir := setupLocalRepo(t)
 	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte("secret.env\n"), 0o644); err != nil {

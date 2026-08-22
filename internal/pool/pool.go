@@ -474,7 +474,7 @@ func ReleaseConditional(poolDir, worktreePath string, preconditions ReleasePreco
 		}
 		// Clearing a safety quarantine without a trusted seed inventory could
 		// expose ignored files hidden by a mutable manifest.
-		if !wt.SeedInventoryKnown && (wt.LeaseHolder == recoveredLeaseHolder || wt.LeaseHolder == acquisitionIncompleteLeaseHolder) {
+		if !wt.SeedInventoryKnown {
 			return fmt.Errorf("worktree %s is quarantined without a trusted seed inventory; inspect it and use destroy --include-leased instead", worktreePath)
 		}
 		if beforeReset != nil {
