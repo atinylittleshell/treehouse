@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/kunchenguid/treehouse/internal/vcs"
 )
 
 type WorktreeEntry struct {
@@ -133,11 +135,12 @@ func recoverMissingStateEntries(poolDir string, s State) (State, error) {
 			if known[filepath.Clean(wtPath)] {
 				continue
 			}
-			if _, err := os.Stat(filepath.Join(wtPath, ".git")); err != nil {
-				if os.IsNotExist(err) {
-					continue
-				}
+			flavor, err := vcs.WorktreeBackendNameChecked(wtPath)
+			if err != nil {
 				return State{}, fmt.Errorf("inspecting untracked pool worktree %s: %w", wtPath, err)
+			}
+			if flavor == "" {
+				continue
 			}
 			now := time.Now()
 			s.Worktrees = append(s.Worktrees, WorktreeEntry{
@@ -186,10 +189,11 @@ func recoverCorruptState(poolDir string, parseErr error) (State, error) {
 				continue
 			}
 			wtPath := filepath.Join(slotDir, n.Name())
-			if _, err := os.Stat(filepath.Join(wtPath, ".git")); err != nil {
-				if !os.IsNotExist(err) {
-					return State{}, fmt.Errorf("state file %s is corrupt or truncated (%v), and recovery could not inspect %s: %w", stateFilePath(poolDir), parseErr, wtPath, err)
-				}
+			flavor, err := vcs.WorktreeBackendNameChecked(wtPath)
+			if err != nil {
+				return State{}, fmt.Errorf("state file %s is corrupt or truncated (%v), and recovery could not inspect %s: %w", stateFilePath(poolDir), parseErr, wtPath, err)
+			}
+			if flavor == "" {
 				continue
 			}
 			now := time.Now()

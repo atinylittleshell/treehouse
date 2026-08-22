@@ -47,6 +47,26 @@ func TestReadState_RecoversWorktreeMissingFromValidState(t *testing.T) {
 	}
 }
 
+func TestReadState_RecoversJJWorktreeMissingFromValidState(t *testing.T) {
+	poolDir := t.TempDir()
+	missingPath := makeFakeJJWorktree(t, poolDir, "1", "myrepo")
+	if err := WriteState(poolDir, State{}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Worktrees) != 1 {
+		t.Fatalf("ReadState returned %d entries, want recovered jj worktree", len(got.Worktrees))
+	}
+	entry := got.Worktrees[0]
+	if entry.Path != missingPath || !entry.Leased || entry.LeaseHolder != recoveredLeaseHolder {
+		t.Fatalf("missing jj worktree was not conservatively recovered: %#v", entry)
+	}
+}
+
 func TestReadState_LoadsPreIdentityLease(t *testing.T) {
 	poolDir := t.TempDir()
 	stateJSON := `{
@@ -176,6 +196,22 @@ func TestReadState_RecoversFromEmptyFile(t *testing.T) {
 	}
 }
 
+func TestReadState_RecoversJJWorktreeFromEmptyFile(t *testing.T) {
+	poolDir := t.TempDir()
+	wtPath := makeFakeJJWorktree(t, poolDir, "1", "myrepo")
+	if err := os.WriteFile(stateFilePath(poolDir), nil, 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	got, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatalf("ReadState on empty file returned error: %v", err)
+	}
+	if len(got.Worktrees) != 1 || got.Worktrees[0].Path != wtPath || !got.Worktrees[0].Leased {
+		t.Fatalf("recovered state = %+v, want jj worktree marked leased", got.Worktrees)
+	}
+}
+
 // TestReadState_RecoversFromPartiallyWrittenFile covers a crash that lands
 // mid-write with some, but not all, bytes flushed - a truncated-but-nonempty
 // file, which also fails json.Unmarshal and must take the same recovery path
@@ -239,6 +275,15 @@ func makeFakeWorktree(t *testing.T, poolDir, slot, repoName string) string {
 	}
 	if err := os.WriteFile(filepath.Join(wtPath, ".git"), []byte("gitdir: ../../fake.git\n"), 0644); err != nil {
 		t.Fatalf("WriteFile .git: %v", err)
+	}
+	return wtPath
+}
+
+func makeFakeJJWorktree(t *testing.T, poolDir, slot, repoName string) string {
+	t.Helper()
+	wtPath := filepath.Join(poolDir, slot, repoName)
+	if err := os.MkdirAll(filepath.Join(wtPath, ".jj"), 0755); err != nil {
+		t.Fatalf("MkdirAll .jj: %v", err)
 	}
 	return wtPath
 }

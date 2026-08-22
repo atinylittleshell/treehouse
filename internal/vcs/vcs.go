@@ -302,13 +302,32 @@ func RemoveCleanWorktree(repoRoot, path string) error {
 // colocated), so the marker identifies what the slot actually is regardless
 // of the repository's configured backend.
 func slotMarkerBackend(path string) Backend {
-	if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
+	name, _ := WorktreeBackendNameChecked(path)
+	switch name {
+	case "git":
 		return gitBackend
-	}
-	if info, err := os.Stat(filepath.Join(path, ".jj")); err == nil && info.IsDir() {
+	case "jj":
 		return jjBackend
 	}
 	return nil
+}
+
+// WorktreeBackendNameChecked names the backend identified by a worktree's
+// marker while preserving filesystem errors for callers that must fail closed.
+func WorktreeBackendNameChecked(path string) (string, error) {
+	if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
+		return "git", nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if info, err := os.Stat(filepath.Join(path, ".jj")); err == nil {
+		if info.IsDir() {
+			return "jj", nil
+		}
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	return "", nil
 }
 
 // backendForWorktree dispatches per-worktree operations - the facts that
