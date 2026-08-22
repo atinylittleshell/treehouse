@@ -745,15 +745,21 @@ func TestAcquire_SeedingDoesNotFollowWorktreeSymlinks(t *testing.T) {
 	}
 	t.Cleanup(func() { seedWorktree = oldSeedWorktree })
 
-	reused, err := Acquire(repoDir, poolDir, 1, nil)
+	if _, err := Acquire(repoDir, poolDir, 1, nil); err == nil {
+		t.Fatal("expected acquisition to fail rather than follow the destination symlink")
+	}
+	assertFileContents(t, sentinel, "safe\n")
+	info, err := os.Lstat(seeded)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("destination symlink was unexpectedly replaced: info=%v err=%v", info, err)
+	}
+	state, err := ReadState(poolDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reused != wtPath {
-		t.Fatalf("got worktree %s, want reused %s", reused, wtPath)
+	if len(state.Worktrees) != 1 || !state.Worktrees[0].Leased {
+		t.Fatalf("failed reused worktree was not quarantined: %#v", state.Worktrees)
 	}
-	assertFileContents(t, sentinel, "safe\n")
-	assertFileContents(t, seeded, "seeded\n")
 }
 
 func TestAcquire_DoesNotSeedFilesTrackedByTargetWorktree(t *testing.T) {

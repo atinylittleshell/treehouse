@@ -76,7 +76,7 @@ type Backend interface {
 	// discarding local modifications.
 	ResetWorktree(worktreePath, branch string) error
 	// ResetWorktreeWithSeededPaths resets a worktree after removing its trusted
-	// seed inventory. A nil inventory requests legacy metadata-based cleanup.
+	// seed inventory. A nil inventory does not authorize ignored-file deletion.
 	ResetWorktreeWithSeededPaths(worktreePath, branch string, seededPaths []string) error
 	// ResetWorktreeToRef resets worktreePath to an already resolved commit.
 	// Callers that verified safety must pass the reset target and worktree
@@ -87,8 +87,8 @@ type Backend interface {
 	// taken, or (when requireClean) the tree is dirty.
 	ResetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean bool) error
 	// ResetWorktreeToRefWithSeededPaths applies the same guarded reset after
-	// removing the trusted seed inventory. A nil inventory requests the
-	// backend's legacy metadata-based cleanup.
+	// removing the trusted seed inventory. A nil inventory does not authorize
+	// ignored-file deletion.
 	ResetWorktreeToRefWithSeededPaths(worktreePath, ref, expectedHead string, requireClean bool, seededPaths []string) error
 	// IsWorktreeSafeToReset reports whether worktreePath can be reset to
 	// branch without discarding committed work. It returns the immutable
