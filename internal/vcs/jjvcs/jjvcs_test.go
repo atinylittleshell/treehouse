@@ -230,6 +230,23 @@ func TestResetWorktreeResolutionFailurePreservesSeededPaths(t *testing.T) {
 	}
 }
 
+func TestResetWorktreeWithSeededPathsRemovesSeedFromWorkspace(t *testing.T) {
+	requireJJ(t)
+	repoDir := newLocalRepo(t)
+	writeFile(t, filepath.Join(repoDir, ".gitignore"), "*.env\n")
+	mustJJ(t, repoDir, "commit", "-m", "ignore environment files")
+	worktree := addWorkspace(t, repoDir)
+	seed := filepath.Join(worktree, "selected.env")
+	writeFile(t, seed, "secret\n")
+
+	if err := New().ResetWorktreeWithSeededPaths(worktree, "main", []string{"selected.env"}); err != nil {
+		t.Fatalf("ResetWorktreeWithSeededPaths failed: %v", err)
+	}
+	if _, err := os.Stat(seed); !os.IsNotExist(err) {
+		t.Fatalf("seeded file still exists: %v", err)
+	}
+}
+
 func TestFindMainRepoRootFromWorkspace(t *testing.T) {
 	requireJJ(t)
 	repoDir := newLocalRepo(t)

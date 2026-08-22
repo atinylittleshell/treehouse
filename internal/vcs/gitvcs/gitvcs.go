@@ -694,6 +694,10 @@ func IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, string, e
 }
 
 func removeSeededPaths(worktreePath string, paths []string, expected os.FileInfo) error {
+	return removeSeededPathsAuthenticated(worktreePath, paths, expected, authenticateLinkedWorktree)
+}
+
+func removeSeededPathsAuthenticated(worktreePath string, paths []string, expected os.FileInfo, authenticate func(*os.Root, string) error) error {
 	for _, name := range paths {
 		if name == "" || path.IsAbs(name) || path.Clean(name) != name || strings.ContainsAny(name, "\\\x00") {
 			return fmt.Errorf("invalid seeded path %q", name)
@@ -703,7 +707,7 @@ func removeSeededPaths(worktreePath string, paths []string, expected os.FileInfo
 			return fmt.Errorf("invalid seeded path %q", name)
 		}
 	}
-	root, worktree, err := openCleanupRoot(worktreePath, expected)
+	root, worktree, err := openCleanupRoot(worktreePath, expected, authenticate)
 	if err != nil {
 		return err
 	}
@@ -718,6 +722,14 @@ func removeSeededPaths(worktreePath string, paths []string, expected os.FileInfo
 }
 
 func RemoveSeededPaths(worktreePath string, paths []string) error {
+	return removeSeededPathsFromWorktree(worktreePath, paths, authenticateLinkedWorktree)
+}
+
+func RemoveSeededPathsFromJJWorkspace(worktreePath string, paths []string) error {
+	return removeSeededPathsFromWorktree(worktreePath, paths, authenticateJJWorkspace)
+}
+
+func removeSeededPathsFromWorktree(worktreePath string, paths []string, authenticate func(*os.Root, string) error) error {
 	worktree, err := openDirectoryNoFollow(worktreePath)
 	if err != nil {
 		return err
@@ -727,10 +739,10 @@ func RemoveSeededPaths(worktreePath string, paths []string) error {
 	if err != nil {
 		return err
 	}
-	return removeSeededPaths(worktreePath, paths, expected)
+	return removeSeededPathsAuthenticated(worktreePath, paths, expected, authenticate)
 }
 
-func openCleanupRoot(worktreePath string, expected os.FileInfo) (*os.Root, *os.File, error) {
+func openCleanupRoot(worktreePath string, expected os.FileInfo, authenticate func(*os.Root, string) error) (*os.Root, *os.File, error) {
 	// Keep the no-follow handle open so a pathname swap cannot redirect cleanup.
 	worktree, err := openDirectoryNoFollow(worktreePath)
 	if err != nil {
@@ -746,12 +758,39 @@ func openCleanupRoot(worktreePath string, expected os.FileInfo) (*os.Root, *os.F
 		worktree.Close()
 		return nil, nil, err
 	}
-	if err := authenticateLinkedWorktree(root, worktreePath); err != nil {
+	if err := authenticate(root, worktreePath); err != nil {
 		root.Close()
 		worktree.Close()
 		return nil, nil, err
 	}
 	return root, worktree, nil
+}
+
+func authenticateJJWorkspace(root *os.Root, worktreePath string) error {
+	marker, err := root.Lstat(".jj")
+	if err != nil || !marker.IsDir() || marker.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to clean unregistered worktree %s", worktreePath)
+	}
+	repo, err := root.Lstat(filepath.Join(".jj", "repo"))
+	if err != nil || !repo.Mode().IsRegular() {
+		return fmt.Errorf("refusing to clean unregistered worktree %s", worktreePath)
+	}
+	contents, err := root.ReadFile(filepath.Join(".jj", "repo"))
+	if err != nil {
+		return err
+	}
+	storePath := strings.TrimSpace(string(contents))
+	if storePath == "" {
+		return fmt.Errorf("refusing to clean unregistered worktree %s", worktreePath)
+	}
+	if !filepath.IsAbs(storePath) {
+		storePath = filepath.Join(worktreePath, ".jj", storePath)
+	}
+	store, err := os.Stat(filepath.Clean(storePath))
+	if err != nil || !store.IsDir() {
+		return fmt.Errorf("refusing to clean unregistered worktree %s", worktreePath)
+	}
+	return nil
 }
 
 func authenticateLinkedWorktree(root *os.Root, worktreePath string) error {

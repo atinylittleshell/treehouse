@@ -331,7 +331,7 @@ func (b *Backend) ResetWorktreeWithSeededPaths(worktreePath, branch string, seed
 	if seededPaths == nil {
 		return nil
 	}
-	return gitvcs.RemoveSeededPaths(worktreePath, seededPaths)
+	return gitvcs.RemoveSeededPathsFromJJWorkspace(worktreePath, seededPaths)
 }
 
 // ResetWorktreeToRef resets worktreePath to an already resolved commit.
@@ -412,7 +412,7 @@ func (b *Backend) ResetWorktreeToRefWithSeededPaths(worktreePath, ref, expectedH
 	if seededPaths == nil {
 		return nil
 	}
-	return gitvcs.RemoveSeededPaths(worktreePath, seededPaths)
+	return gitvcs.RemoveSeededPathsFromJJWorkspace(worktreePath, seededPaths)
 }
 
 func (b *Backend) parkedOnRef(worktreePath, ref string) (bool, error) {
