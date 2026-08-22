@@ -189,16 +189,34 @@ func SeedWorktree(repoRoot, worktreePath string) error {
 // SeedWorktreeWithInventory returns the paths it copied so the pool can remove
 // them later without trusting mutable content in the acquired worktree.
 func SeedWorktreeWithInventory(repoRoot, worktreePath string) ([]string, error) {
-	selected, err := selectedSeedPaths(repoRoot)
+	return seedWorktreeWithInventory(repoRoot, worktreePath, nil, nil)
+}
+
+func SeedWorktreeWithInventoryFromGitStore(repoRoot, worktreePath, gitDir, ref string) ([]string, error) {
+	env := append(os.Environ(), "GIT_DIR="+gitDir, "GIT_WORK_TREE="+repoRoot)
+	trackedOutput, err := gitOutputEnv(repoRoot, env, nil, "ls-tree", "-rz", "--name-only", ref)
+	if err != nil {
+		return nil, err
+	}
+	if trackedOutput == nil {
+		trackedOutput = []byte{}
+	}
+	return seedWorktreeWithInventory(repoRoot, worktreePath, env, trackedOutput)
+}
+
+func seedWorktreeWithInventory(repoRoot, worktreePath string, gitEnv []string, trackedOutput []byte) ([]string, error) {
+	selected, err := selectedSeedPathsEnv(repoRoot, gitEnv)
 	if err != nil || len(selected) == 0 {
 		return nil, err
 	}
 
 	// checkout-index uses --force to refresh old seeds, so remove paths tracked
 	// by the destination before building the temporary index.
-	trackedOutput, err := gitOutput(worktreePath, nil, "ls-files", "-z")
-	if err != nil {
-		return nil, err
+	if trackedOutput == nil {
+		trackedOutput, err = gitOutput(worktreePath, nil, "ls-files", "-z")
+		if err != nil {
+			return nil, err
+		}
 	}
 	ignoreCase, err := worktreeCaseInsensitive(worktreePath)
 	if err != nil {
@@ -301,9 +319,6 @@ func SeedWorktreeWithInventory(repoRoot, worktreePath string) ([]string, error) 
 		if err := ensureRootedDir(destinationRoot, filepath.Dir(rel)); err != nil {
 			return failed(err)
 		}
-		if err := destinationRoot.Remove(rel); err != nil && !os.IsNotExist(err) {
-			return failed(err)
-		}
 		dst, err := destinationRoot.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if err != nil {
 			return failed(err)
@@ -326,13 +341,18 @@ func SeedWorktreeWithInventory(repoRoot, worktreePath string) ([]string, error) 
 }
 
 func worktreeCaseInsensitive(worktreePath string) (bool, error) {
-	marker, err := os.Stat(filepath.Join(worktreePath, ".git"))
+	markerName := ".git"
+	marker, err := os.Stat(filepath.Join(worktreePath, markerName))
+	if os.IsNotExist(err) {
+		markerName = ".jj"
+		marker, err = os.Stat(filepath.Join(worktreePath, markerName))
+	}
 	if err != nil {
 		return false, err
 	}
 	// The filesystem, rather than a mutable Git setting, decides whether two
 	// differently cased destination paths can refer to the same tracked file.
-	alias, err := os.Stat(filepath.Join(worktreePath, ".GIT"))
+	alias, err := os.Stat(filepath.Join(worktreePath, strings.ToUpper(markerName)))
 	if os.IsNotExist(err) {
 		return false, nil
 	}
@@ -343,21 +363,29 @@ func worktreeCaseInsensitive(worktreePath string) (bool, error) {
 }
 
 func selectedSeedPaths(repoRoot string) ([]byte, error) {
+	return selectedSeedPathsEnv(repoRoot, nil)
+}
+
+func selectedSeedPathsEnv(repoRoot string, gitEnv []string) ([]byte, error) {
 	manifest, err := os.ReadFile(filepath.Join(repoRoot, ".worktreeinclude"))
 	if os.IsNotExist(err) {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
 	}
-	return selectedSeedPathsWithManifest(repoRoot, manifest)
+	return selectedSeedPathsWithManifestEnv(repoRoot, manifest, gitEnv)
 }
 
 func selectedSeedPathsWithManifest(repoRoot string, manifest []byte) ([]byte, error) {
-	selected, err := manifestSelectedPaths(repoRoot, manifest)
+	return selectedSeedPathsWithManifestEnv(repoRoot, manifest, nil)
+}
+
+func selectedSeedPathsWithManifestEnv(repoRoot string, manifest []byte, gitEnv []string) ([]byte, error) {
+	selected, err := manifestSelectedPathsEnv(repoRoot, manifest, gitEnv)
 	if err != nil || len(selected) == 0 {
 		return selected, err
 	}
-	ignored, err := gitOutput(repoRoot, nil,
+	ignored, err := gitOutputEnv(repoRoot, gitEnv, nil,
 		"ls-files", "-z", "--others", "--ignored", "--exclude-standard")
 	if err != nil {
 		return nil, err
@@ -377,6 +405,10 @@ func selectedSeedPathsWithManifest(repoRoot string, manifest []byte) ([]byte, er
 }
 
 func manifestSelectedPaths(repoRoot string, manifest []byte) ([]byte, error) {
+	return manifestSelectedPathsEnv(repoRoot, manifest, nil)
+}
+
+func manifestSelectedPathsEnv(repoRoot string, manifest []byte, gitEnv []string) ([]byte, error) {
 	excludeFile, err := os.CreateTemp("", "treehouse-worktreeinclude-")
 	if err != nil {
 		return nil, err
@@ -393,7 +425,7 @@ func manifestSelectedPaths(repoRoot string, manifest []byte) ([]byte, error) {
 
 	// Git owns the pattern language so .worktreeinclude behaves exactly like
 	// an exclude file, including negation, escaping, and ** patterns.
-	return gitOutput(repoRoot, nil,
+	return gitOutputEnv(repoRoot, gitEnv, nil,
 		"ls-files", "-z", "--others", "--ignored", "--exclude-from="+excludePath)
 }
 
@@ -450,12 +482,7 @@ func ensureRootedDir(root *os.Root, name string) error {
 		if info.IsDir() {
 			continue
 		}
-		if err := root.RemoveAll(current); err != nil {
-			return err
-		}
-		if err := root.Mkdir(current, 0o755); err != nil {
-			return err
-		}
+		return fmt.Errorf("refusing to replace existing seed ancestor %s", name)
 	}
 	return nil
 }
@@ -688,6 +715,19 @@ func removeSeededPaths(worktreePath string, paths []string, expected os.FileInfo
 		}
 	}
 	return nil
+}
+
+func RemoveSeededPaths(worktreePath string, paths []string) error {
+	worktree, err := openDirectoryNoFollow(worktreePath)
+	if err != nil {
+		return err
+	}
+	defer worktree.Close()
+	expected, err := worktree.Stat()
+	if err != nil {
+		return err
+	}
+	return removeSeededPaths(worktreePath, paths, expected)
 }
 
 func openCleanupRoot(worktreePath string, expected os.FileInfo) (*os.Root, *os.File, error) {

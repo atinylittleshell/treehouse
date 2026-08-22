@@ -953,7 +953,7 @@ func TestRemoveSeededPathsRejectsReplacementDirectory(t *testing.T) {
 	assertTestFile(t, worktree, "secret.env", "keep me\n")
 }
 
-func TestSeedWorktreeDoesNotFollowDestinationSymlink(t *testing.T) {
+func TestSeedWorktreeRefusesDestinationSymlink(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "config/settings.env\n")
 	writeTestFile(t, repo, "config/settings.env", "seeded\n")
 	outside := t.TempDir()
@@ -961,13 +961,34 @@ func TestSeedWorktreeDoesNotFollowDestinationSymlink(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	if err := SeedWorktree(repo, worktree); err != nil {
-		t.Fatal(err)
+	if err := SeedWorktree(repo, worktree); err == nil {
+		t.Fatal("expected destination symlink to reject seeding")
 	}
-	assertTestFile(t, worktree, "config/settings.env", "seeded\n")
 	if _, err := os.Stat(filepath.Join(outside, "settings.env")); !os.IsNotExist(err) {
 		t.Fatalf("seed escaped through destination symlink: %v", err)
 	}
+}
+
+func TestSeedWorktreeRefusesToOverwriteUnmanagedDestination(t *testing.T) {
+	repo, worktree := setupSeedWorktree(t, "secret.env\n")
+	writeTestFile(t, repo, "secret.env", "seeded\n")
+	writeTestFile(t, worktree, "secret.env", "local\n")
+
+	if err := SeedWorktree(repo, worktree); err == nil {
+		t.Fatal("expected existing unmanaged file to reject seeding")
+	}
+	assertTestFile(t, worktree, "secret.env", "local\n")
+}
+
+func TestSeedWorktreeRefusesToOverwriteUnmanagedAncestor(t *testing.T) {
+	repo, worktree := setupSeedWorktree(t, "config/secret.env\n")
+	writeTestFile(t, repo, "config/secret.env", "seeded\n")
+	writeTestFile(t, worktree, "config", "local\n")
+
+	if err := SeedWorktree(repo, worktree); err == nil {
+		t.Fatal("expected existing unmanaged ancestor to reject seeding")
+	}
+	assertTestFile(t, worktree, "config", "local\n")
 }
 
 func TestSeedWorktreeRejectsSymlinkedRoot(t *testing.T) {

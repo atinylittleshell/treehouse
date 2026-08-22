@@ -178,6 +178,28 @@ func TestAddWorktreeCreatesUsableWorkspace(t *testing.T) {
 	}
 }
 
+func TestSeedWorktreeCopiesIgnoredManifestSelection(t *testing.T) {
+	requireJJ(t)
+	repoDir := newLocalRepo(t)
+	writeFile(t, filepath.Join(repoDir, ".gitignore"), "*.env\n")
+	writeFile(t, filepath.Join(repoDir, ".worktreeinclude"), "selected.env\n")
+	writeFile(t, filepath.Join(repoDir, "selected.env"), "secret\n")
+	mustJJ(t, repoDir, "commit", "-m", "add seed manifest")
+	wtPath := addWorkspace(t, repoDir)
+
+	seeded, err := New().SeedWorktree(repoDir, wtPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seeded) != 1 || seeded[0] != "selected.env" {
+		t.Fatalf("seeded paths = %v, want [selected.env]", seeded)
+	}
+	data, err := os.ReadFile(filepath.Join(wtPath, "selected.env"))
+	if err != nil || string(data) != "secret\n" {
+		t.Fatalf("seeded file = %q, %v", data, err)
+	}
+}
+
 func TestFindMainRepoRootFromWorkspace(t *testing.T) {
 	requireJJ(t)
 	repoDir := newLocalRepo(t)

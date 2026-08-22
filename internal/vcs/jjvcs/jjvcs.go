@@ -32,6 +32,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/kunchenguid/treehouse/internal/vcs/gitvcs"
 )
 
 // Backend implements the vcs.Backend interface for jj repositories.
@@ -186,9 +188,13 @@ func (b *Backend) AddWorktree(repoRoot, path, branch string) error {
 	return makeRepoPointerAbsolute(absPath)
 }
 
-// SeedWorktree is a no-op because jj has no Git ignore-based seed manifest.
 func (*Backend) SeedWorktree(repoRoot, worktreePath string) ([]string, error) {
-	return nil, nil
+	head, err := worktreeHead(worktreePath)
+	if err != nil {
+		return nil, err
+	}
+	gitDir := filepath.Join(repoRoot, ".jj", "repo", "store", "git")
+	return gitvcs.SeedWorktreeWithInventoryFromGitStore(repoRoot, worktreePath, gitDir, head)
 }
 
 // makeRepoPointerAbsolute rewrites the workspace's .jj/repo store pointer to
@@ -310,8 +316,12 @@ func (b *Backend) ResetWorktree(worktreePath, branch string) error {
 	return b.ResetWorktreeToRef(worktreePath, ref, head, false)
 }
 
-// ResetWorktreeWithSeededPaths delegates because jj has no Git seed inventory.
 func (b *Backend) ResetWorktreeWithSeededPaths(worktreePath, branch string, seededPaths []string) error {
+	if seededPaths != nil {
+		if err := gitvcs.RemoveSeededPaths(worktreePath, seededPaths); err != nil {
+			return err
+		}
+	}
 	return b.ResetWorktree(worktreePath, branch)
 }
 
@@ -386,9 +396,12 @@ func (b *Backend) ResetWorktreeToRef(worktreePath, ref, expectedHead string, req
 	return err
 }
 
-// ResetWorktreeToRefWithSeededPaths delegates to the guarded reset because jj
-// workspaces never contain Git seed inventory.
 func (b *Backend) ResetWorktreeToRefWithSeededPaths(worktreePath, ref, expectedHead string, requireClean bool, seededPaths []string) error {
+	if seededPaths != nil {
+		if err := gitvcs.RemoveSeededPaths(worktreePath, seededPaths); err != nil {
+			return err
+		}
+	}
 	return b.ResetWorktreeToRef(worktreePath, ref, expectedHead, requireClean)
 }
 

@@ -140,7 +140,7 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
 - **Durable leases** - `treehouse get --lease` reserves a worktree as a persistent home without keeping a process inside it. Each acquisition gets an immutable random lease identity, and the lease is recorded in treehouse's own state. The worktree is never handed out by a later `get` and never removed by `prune` until you release it with `treehouse return`. Unlike process-based in-use detection, a lease survives with zero processes running inside the worktree.
 - **State recovery** - treehouse writes pool state atomically via a temp file and replacement.
   If an existing state file is empty, truncated, or omits an on-disk worktree, treehouse rebuilds the missing entries and quarantines them for inspection and explicit destruction. See [Recovering missing pool state](#recovering-missing-pool-state).
-- **Gitignored file seeding** — with the Git backend, commit a `.worktreeinclude` file to copy selected local files from the main checkout on every acquire. See [Seeding gitignored files](#seeding-gitignored-files).
+- **Gitignored file seeding** — commit a `.worktreeinclude` file to copy selected local files from the main checkout on every acquire. See [Seeding gitignored files](#seeding-gitignored-files).
 - **Dirty detection** - treehouse treats tracked changes and untracked files as dirty, even when repository config hides untracked files from normal `git status` output.
 - **Safe pruning** - By default, `treehouse prune` removes only idle managed worktrees whose HEAD is already merged into the default branch and whose working tree is clean.
   `treehouse prune --all` applies the same safety checks across every managed pool under the user-level treehouse root.
@@ -190,7 +190,7 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
 
 ### Seeding gitignored files
 
-With the Git backend, commit a `.worktreeinclude` file to seed selected gitignored files from the main checkout into each acquired worktree. The jj backend ignores this file. This is useful for local configuration or generated files that every worktree needs but Git should not track.
+Commit a `.worktreeinclude` file to seed selected gitignored files from the main checkout into each acquired Git worktree or jj workspace. This is useful for local configuration or generated files that every worktree needs but Git should not track.
 
 `.worktreeinclude` uses `.gitignore` pattern syntax. A file must be ignored by the repository and selected by `.worktreeinclude`; tracked files and unignored untracked files are never copied. Use `!` to exclude a broader match:
 
