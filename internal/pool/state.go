@@ -115,7 +115,7 @@ func ReadState(poolDir string) (State, error) {
 	key, keyErr := readStateKey(poolDir)
 	for i := range s.Worktrees {
 		wt := &s.Worktrees[i]
-		if s.Version != stateVersion || keyErr != nil || !wt.SeedInventoryKnown || !validSeedInventory(wt.SeededPaths) || !hmac.Equal([]byte(wt.SeedInventoryDigest), []byte(seedInventoryDigest(key, wt.SeededPaths))) {
+		if s.Version != stateVersion || keyErr != nil || !wt.SeedInventoryKnown || !validSeedInventory(wt.SeededPaths) || !hmac.Equal([]byte(wt.SeedInventoryDigest), []byte(seedInventoryDigest(key, *wt))) {
 			wt.Leased = true
 			wt.LeaseHolder = recoveredLeaseHolder
 			wt.SeededPaths = nil
@@ -136,11 +136,15 @@ func setSeedInventory(wt *WorktreeEntry, paths []string, known bool) {
 	wt.SeedInventoryDigest = ""
 }
 
-func seedInventoryDigest(key []byte, paths []string) string {
-	if len(paths) == 0 {
-		paths = []string{}
+func seedInventoryDigest(key []byte, wt WorktreeEntry) string {
+	if len(wt.SeededPaths) == 0 {
+		wt.SeededPaths = []string{}
 	}
-	data, _ := json.Marshal(paths)
+	data, _ := json.Marshal(struct {
+		Name        string   `json:"name"`
+		Path        string   `json:"path"`
+		SeededPaths []string `json:"seeded_paths"`
+	}{wt.Name, filepath.Clean(wt.Path), wt.SeededPaths})
 	digest := hmac.New(sha256.New, key)
 	_, _ = digest.Write(data)
 	return hex.EncodeToString(digest.Sum(nil))
@@ -212,7 +216,7 @@ func prepareStateForWrite(poolDir string, s State) (State, error) {
 			if !validSeedInventory(wt.SeededPaths) {
 				return State{}, fmt.Errorf("invalid seeded path inventory")
 			}
-			wt.SeedInventoryDigest = seedInventoryDigest(key, wt.SeededPaths)
+			wt.SeedInventoryDigest = seedInventoryDigest(key, *wt)
 		} else {
 			wt.SeedInventoryDigest = ""
 		}

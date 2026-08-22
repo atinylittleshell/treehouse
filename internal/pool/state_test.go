@@ -158,7 +158,7 @@ func TestReadState_QuarantinesInventoryWithoutValidDigest(t *testing.T) {
 	if err := WriteState(poolDir, State{}); err != nil {
 		t.Fatal(err)
 	}
-	forgedDigest := seedInventoryDigest(nil, []string{"ignored-user-file"})
+	forgedDigest := seedInventoryDigest(nil, WorktreeEntry{Name: "1", Path: worktreePath, SeededPaths: []string{"ignored-user-file"}})
 	stateJSON := fmt.Sprintf(`{
   "version": 3,
   "worktrees": [{
@@ -181,6 +181,47 @@ func TestReadState_QuarantinesInventoryWithoutValidDigest(t *testing.T) {
 	entry := state.Worktrees[0]
 	if !entry.Leased || entry.SeedInventoryKnown || entry.LeaseHolder != recoveredLeaseHolder {
 		t.Fatalf("unverified inventory was not quarantined: %#v", entry)
+	}
+}
+
+func TestReadState_QuarantinesInventoryMovedBetweenWorktrees(t *testing.T) {
+	poolDir := t.TempDir()
+	firstPath := makeFakeWorktree(t, poolDir, "1", "myrepo")
+	secondPath := makeFakeWorktree(t, poolDir, "2", "myrepo")
+	state := State{Worktrees: []WorktreeEntry{
+		{Name: "1", Path: firstPath, SeededPaths: []string{"first-secret"}, SeedInventoryKnown: true},
+		{Name: "2", Path: secondPath, SeededPaths: []string{"second-secret"}, SeedInventoryKnown: true},
+	}}
+	if err := WriteState(poolDir, state); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(stateFilePath(poolDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted State
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	persisted.Worktrees[0].SeededPaths, persisted.Worktrees[1].SeededPaths = persisted.Worktrees[1].SeededPaths, persisted.Worktrees[0].SeededPaths
+	persisted.Worktrees[0].SeedInventoryDigest, persisted.Worktrees[1].SeedInventoryDigest = persisted.Worktrees[1].SeedInventoryDigest, persisted.Worktrees[0].SeedInventoryDigest
+	data, err = json.Marshal(persisted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFilePath(poolDir), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range got.Worktrees {
+		if !entry.Leased || entry.SeedInventoryKnown || entry.LeaseHolder != recoveredLeaseHolder {
+			t.Fatalf("moved inventory was not quarantined: %#v", entry)
+		}
 	}
 }
 
