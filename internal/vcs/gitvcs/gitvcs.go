@@ -2,7 +2,9 @@ package gitvcs
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -773,18 +775,11 @@ func AuthenticateJJSeededCleanup(worktreePath string) error {
 
 func RemoveJJSeedAuthentication(worktreePath string) error {
 	authPath := jjSeedAuthenticationPath(worktreePath)
-	auth, err := os.Stat(authPath)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	marker, err := os.Stat(filepath.Join(worktreePath, ".jj", "repo"))
-	if err != nil || !os.SameFile(marker, auth) {
-		return fmt.Errorf("refusing to remove unowned jj seed authentication for %s", worktreePath)
-	}
-	return os.Remove(authPath)
+	return quarantineAndRemoveJJAuthentication(authPath, func(candidate string) bool {
+		auth, authErr := os.Stat(candidate)
+		marker, markerErr := os.Stat(filepath.Join(worktreePath, ".jj", "repo"))
+		return authErr == nil && markerErr == nil && os.SameFile(marker, auth)
+	})
 }
 
 func JJSeedAuthenticationIdentity(worktreePath string) (string, error) {
@@ -793,24 +788,38 @@ func JJSeedAuthenticationIdentity(worktreePath string) (string, error) {
 
 func RemoveStaleJJSeedAuthentication(worktreePath, expectedIdentity string) error {
 	authPath := jjSeedAuthenticationPath(worktreePath)
-	auth, err := os.Lstat(authPath)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if !auth.Mode().IsRegular() {
-		return fmt.Errorf("refusing to remove unowned jj seed authentication for %s", worktreePath)
-	}
-	identity, err := fileIdentity(authPath)
-	if err != nil || identity != expectedIdentity {
-		return fmt.Errorf("refusing to remove unowned jj seed authentication for %s", worktreePath)
-	}
 	if _, err := os.Stat(worktreePath); err == nil || !os.IsNotExist(err) {
 		return fmt.Errorf("refusing to remove jj seed authentication while workspace exists at %s", worktreePath)
 	}
-	return os.Remove(authPath)
+	return quarantineAndRemoveJJAuthentication(authPath, func(candidate string) bool {
+		info, statErr := os.Lstat(candidate)
+		identity, identityErr := fileIdentity(candidate)
+		return statErr == nil && info.Mode().IsRegular() && identityErr == nil && identity == expectedIdentity
+	})
+}
+
+var jjAuthenticationQuarantined = func(string) {}
+
+func quarantineAndRemoveJJAuthentication(authPath string, verify func(string) bool) error {
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return err
+	}
+	quarantinePath := filepath.Join(filepath.Dir(authPath), ".quarantine-"+hex.EncodeToString(nonce[:]))
+	if err := os.Rename(authPath, quarantinePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	jjAuthenticationQuarantined(authPath)
+	if !verify(quarantinePath) {
+		if err := os.Link(quarantinePath, authPath); err == nil {
+			_ = os.Remove(quarantinePath)
+		}
+		return fmt.Errorf("refusing to remove unowned jj seed authentication %s", authPath)
+	}
+	return os.Remove(quarantinePath)
 }
 
 func jjSeedAuthenticationPath(worktreePath string) string {

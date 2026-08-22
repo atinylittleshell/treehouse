@@ -1070,6 +1070,65 @@ func TestRemoveStaleJJSeedAuthenticationAllowsWorkspaceRecreation(t *testing.T) 
 	}
 }
 
+func TestRemoveJJSeedAuthenticationPreservesConcurrentReplacement(t *testing.T) {
+	worktree := filepath.Join(t.TempDir(), "worktree")
+	marker := filepath.Join(worktree, ".jj", "repo")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte("store"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareJJSeededCleanup(worktree); err != nil {
+		t.Fatal(err)
+	}
+	oldHook := jjAuthenticationQuarantined
+	jjAuthenticationQuarantined = func(path string) {
+		if err := os.WriteFile(path, []byte("replacement\n"), 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { jjAuthenticationQuarantined = oldHook })
+
+	if err := RemoveJJSeedAuthentication(worktree); err != nil {
+		t.Fatal(err)
+	}
+	assertTestFile(t, filepath.Dir(jjSeedAuthenticationPath(worktree)), filepath.Base(jjSeedAuthenticationPath(worktree)), "replacement\n")
+}
+
+func TestRemoveStaleJJSeedAuthenticationPreservesConcurrentReplacement(t *testing.T) {
+	worktree := filepath.Join(t.TempDir(), "worktree")
+	marker := filepath.Join(worktree, ".jj", "repo")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte("store"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareJJSeededCleanup(worktree); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := JJSeedAuthenticationIdentity(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(worktree); err != nil {
+		t.Fatal(err)
+	}
+	oldHook := jjAuthenticationQuarantined
+	jjAuthenticationQuarantined = func(path string) {
+		if err := os.WriteFile(path, []byte("replacement\n"), 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { jjAuthenticationQuarantined = oldHook })
+
+	if err := RemoveStaleJJSeedAuthentication(worktree, identity); err != nil {
+		t.Fatal(err)
+	}
+	assertTestFile(t, filepath.Dir(jjSeedAuthenticationPath(worktree)), filepath.Base(jjSeedAuthenticationPath(worktree)), "replacement\n")
+}
+
 func TestSeedWorktreeRefusesDestinationSymlink(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "config/settings.env\n")
 	writeTestFile(t, repo, "config/settings.env", "seeded\n")
