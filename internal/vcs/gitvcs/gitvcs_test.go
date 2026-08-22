@@ -882,7 +882,7 @@ func TestOpenRootUnchangedRejectsReplacedDirectory(t *testing.T) {
 	if err := os.Mkdir(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	originalHandle, err := os.Open(path)
+	originalHandle, err := openDirectoryNoFollow(path)
 	if err != nil {
 		t.Fatal(err)
 	}
