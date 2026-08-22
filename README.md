@@ -261,7 +261,7 @@ For backward compatibility, `treehouse return <path>` without either condition k
 ### Recovering missing pool state
 
 Treehouse writes `treehouse-state.json` atomically, so a crash mid-write should leave the previous state file intact.
-If an existing state file is empty or truncated, commands do not fail just because the JSON cannot be parsed.
+If an existing state file is empty, truncated, or otherwise invalid, commands do not fail just because the JSON cannot be parsed.
 They print a warning and rebuild the pool entries from worktree directories still on disk.
 Commands also restore an on-disk worktree that is missing from an otherwise valid state file, covering the narrow case where worktree creation succeeded but recording its quarantine failed.
 Every restored entry is marked `leased` because treehouse cannot know whether it was idle, in-use, or durably leased.
