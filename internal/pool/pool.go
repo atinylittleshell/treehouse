@@ -1,6 +1,8 @@
 package pool
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -122,6 +124,30 @@ var (
 
 const acquisitionIncompleteLeaseHolder = "quarantined: acquisition state incomplete"
 
+func persistState(poolDir string, state State) error {
+	err := writeState(poolDir, state)
+	if err == nil {
+		return nil
+	}
+
+	// Atomic replacement can succeed before the following directory sync
+	// reports an error. Confirm the serialized state so callers do not overwrite
+	// a committed acquisition while trying to recover from an ambiguous result.
+	persisted, readErr := ReadState(poolDir)
+	if readErr != nil {
+		return err
+	}
+	want, marshalErr := json.Marshal(state)
+	if marshalErr != nil {
+		return err
+	}
+	got, marshalErr := json.Marshal(persisted)
+	if marshalErr == nil && bytes.Equal(got, want) {
+		return nil
+	}
+	return err
+}
+
 func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts acquireOptions) (LeaseInfo, error) {
 	branch, err := vcs.GetDefaultBranch(repoRoot)
 	if err != nil {
@@ -208,7 +234,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			state.Worktrees[i].Leased = true
 			state.Worktrees[i].LeaseHolder = acquisitionIncompleteLeaseHolder
 			state.Worktrees[i].LeasedAt = time.Now()
-			if err := writeState(poolDir, state); err != nil {
+			if err := persistState(poolDir, state); err != nil {
 				return err
 			}
 			// Keep partial ignored files away from later acquisitions until a
@@ -232,7 +258,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 				return err
 			}
 			acquired = leaseInfoFromEntry(state.Worktrees[i])
-			if err := writeState(poolDir, state); err != nil {
+			if err := persistState(poolDir, state); err != nil {
 				// Preserve the completed seed inventory outside the mutable
 				// worktree before leaving this failed acquisition quarantined.
 				state.Worktrees[i].OwnerPID = 0
@@ -241,7 +267,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 				state.Worktrees[i].Leased = true
 				state.Worktrees[i].LeaseHolder = acquisitionIncompleteLeaseHolder
 				state.Worktrees[i].LeasedAt = time.Now()
-				if quarantineErr := writeState(poolDir, state); quarantineErr != nil {
+				if quarantineErr := persistState(poolDir, state); quarantineErr != nil {
 					return fmt.Errorf("%w (quarantine failed: %v)", err, quarantineErr)
 				}
 				return err

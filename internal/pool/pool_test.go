@@ -451,6 +451,58 @@ func TestAcquire_ReusedRepeatedStateWriteFailureKeepsSeedInventoryUnknown(t *tes
 	}
 }
 
+func TestAcquire_ReusedCommittedFinalStateWriteErrorReturnsAcquisition(t *testing.T) {
+	repoDir, poolDir := setupLocalRepo(t)
+	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte("secret.env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".worktreeinclude"), []byte("secret.env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "secret.env"), []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", ".gitignore", ".worktreeinclude")
+	runGit(t, repoDir, "commit", "-m", "seed secret")
+
+	wtPath, err := Acquire(repoDir, poolDir, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Release(poolDir, wtPath); err != nil {
+		t.Fatal(err)
+	}
+
+	oldWriteState := writeState
+	writes := 0
+	writeState = func(poolDir string, state State) error {
+		writes++
+		if err := oldWriteState(poolDir, state); err != nil {
+			return err
+		}
+		if writes == 2 {
+			return errors.New("directory sync failed after commit")
+		}
+		return nil
+	}
+	t.Cleanup(func() { writeState = oldWriteState })
+
+	reused, err := Acquire(repoDir, poolDir, 1, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed after its final state was committed: %v", err)
+	}
+	if reused != wtPath {
+		t.Fatalf("got worktree %s, want reused %s", reused, wtPath)
+	}
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Worktrees) != 1 || state.Worktrees[0].OwnerPID == 0 || state.Worktrees[0].Leased {
+		t.Fatalf("committed acquisition state was not preserved: %#v", state.Worktrees)
+	}
+}
+
 func TestAcquire_QuarantinesReusedWorktreeAfterPartialSeedFailure(t *testing.T) {
 	repoDir, poolDir := setupLocalRepo(t)
 	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte("partial.env\n"), 0o644); err != nil {
