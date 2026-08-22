@@ -930,7 +930,12 @@ func TestRemoveSeededPathsRejectsReplacementDirectory(t *testing.T) {
 	if err := os.Mkdir(worktree, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	original, err := os.Stat(worktree)
+	originalHandle, err := openDirectoryNoFollow(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer originalHandle.Close()
+	original, err := originalHandle.Stat()
 	if err != nil {
 		t.Fatal(err)
 	}
