@@ -829,7 +829,7 @@ func TestResetWorktreeRemovesSeedHiddenByModifiedManifest(t *testing.T) {
 	}
 	writeTestFile(t, worktree, ".worktreeinclude", "")
 
-	if err := ResetWorktree(worktree, "main"); err != nil {
+	if err := ResetWorktreeWithSeededPaths(worktree, "main", []string{"secret.env"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(worktree, "secret.env")); !os.IsNotExist(err) {
@@ -837,7 +837,7 @@ func TestResetWorktreeRemovesSeedHiddenByModifiedManifest(t *testing.T) {
 	}
 }
 
-func TestResetWorktreeRemovesLegacySeedWhenCurrentRevisionDoesNotIgnoreIt(t *testing.T) {
+func TestResetWorktreeRemovesInventoriedSeedWhenCurrentRevisionDoesNotIgnoreIt(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "secret.env\n")
 	writeTestFile(t, repo, "secret.env", "secret\n")
 	if err := SeedWorktree(repo, worktree); err != nil {
@@ -847,7 +847,7 @@ func TestResetWorktreeRemovesLegacySeedWhenCurrentRevisionDoesNotIgnoreIt(t *tes
 	mustGit(t, worktree, "add", ".gitignore")
 	mustGit(t, worktree, "commit", "-m", "stop ignoring seed")
 
-	if err := ResetWorktree(worktree, "main"); err != nil {
+	if err := ResetWorktreeWithSeededPaths(worktree, "main", []string{"secret.env"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(worktree, "secret.env")); !os.IsNotExist(err) {
@@ -855,7 +855,7 @@ func TestResetWorktreeRemovesLegacySeedWhenCurrentRevisionDoesNotIgnoreIt(t *tes
 	}
 }
 
-func TestLegacySeedCleanupPreservesUnignoredManifestSelection(t *testing.T) {
+func TestEmptySeedInventoryPreservesUnignoredManifestSelection(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "notes.txt\n")
 	writeTestFile(t, repo, ".gitignore", "*.env\n")
 	mustGit(t, repo, "add", ".gitignore")
@@ -863,13 +863,13 @@ func TestLegacySeedCleanupPreservesUnignoredManifestSelection(t *testing.T) {
 	mustGit(t, worktree, "reset", "--hard", "main")
 	writeTestFile(t, worktree, "notes.txt", "keep me\n")
 
-	if err := removeSeededFiles(worktree, "HEAD"); err != nil {
+	if err := removeSeededPaths(worktree, []string{}); err != nil {
 		t.Fatal(err)
 	}
 	assertTestFile(t, worktree, "notes.txt", "keep me\n")
 }
 
-func TestLegacySeedCleanupRemovesSeedWhoseSourceWasDeleted(t *testing.T) {
+func TestSeedInventoryRemovesSeedWhoseSourceWasDeleted(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "secret.env\n")
 	writeTestFile(t, repo, "secret.env", "secret\n")
 	if err := SeedWorktree(repo, worktree); err != nil {
@@ -879,7 +879,7 @@ func TestLegacySeedCleanupRemovesSeedWhoseSourceWasDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := removeSeededFiles(worktree, "HEAD"); err != nil {
+	if err := removeSeededPaths(worktree, []string{"secret.env"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(worktree, "secret.env")); !os.IsNotExist(err) {

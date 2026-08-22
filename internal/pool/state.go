@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -35,8 +36,8 @@ type WorktreeEntry struct {
 	// acquisition. It must live outside the mutable worktree so reset cannot be
 	// bypassed by changing or committing .worktreeinclude there.
 	SeededPaths []string `json:"seeded_paths,omitempty"`
-	// SeedInventoryKnown distinguishes a verified empty inventory from older
-	// state, which must retain the legacy manifest-based cleanup fallback.
+	// SeedInventoryKnown distinguishes a verified empty inventory from an
+	// incomplete or recovered acquisition that must fail closed.
 	SeedInventoryKnown bool `json:"seed_inventory_known,omitempty"`
 }
 
@@ -88,6 +89,16 @@ func ReadState(poolDir string) (State, error) {
 	var s State
 	if err := json.Unmarshal(data, &s); err != nil {
 		return recoverCorruptState(poolDir, err)
+	}
+	for i := range s.Worktrees {
+		wt := &s.Worktrees[i]
+		// Released Treehouse versions predate seeding, so ordinary legacy
+		// entries have a verified empty inventory. Safety quarantines are the
+		// only missing inventories that must remain unknown.
+		if !wt.SeedInventoryKnown && !strings.HasPrefix(wt.LeaseHolder, "quarantined:") && wt.LeaseHolder != recoveredLeaseHolder {
+			wt.SeededPaths = []string{}
+			wt.SeedInventoryKnown = true
+		}
 	}
 	return recoverMissingStateEntries(poolDir, s)
 }

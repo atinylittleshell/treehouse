@@ -241,13 +241,25 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			// human verifies and explicitly returns the worktree.
 			seededPaths, err = seedWorktree(repoRoot, wt.Path)
 			if err != nil {
+				// Remove every path the failed seed operation reports before relying
+				// on another state write to preserve that partial inventory.
+				cleanupErr := vcs.ResetWorktreeToRefWithSeededPaths(wt.Path, resetRef, resetRef, true, seededPaths)
+				if cleanupErr == nil {
+					seededPaths = []string{}
+				}
 				state.Worktrees[i].SeededPaths = seededPaths
-				state.Worktrees[i].SeedInventoryKnown = true
+				state.Worktrees[i].SeedInventoryKnown = cleanupErr == nil
 				state.Worktrees[i].Leased = true
 				state.Worktrees[i].LeaseHolder = "quarantined: worktree seeding failed"
 				state.Worktrees[i].LeasedAt = time.Now()
 				if writeErr := WriteState(poolDir, state); writeErr != nil {
+					if cleanupErr != nil {
+						return fmt.Errorf("failed to seed .worktreeinclude into %s: %w (cleanup failed: %v; quarantine failed: %v)", wt.Path, err, cleanupErr, writeErr)
+					}
 					return fmt.Errorf("failed to seed .worktreeinclude into %s: %w (quarantine failed: %v)", wt.Path, err, writeErr)
+				}
+				if cleanupErr != nil {
+					return fmt.Errorf("failed to seed .worktreeinclude into %s: %w (cleanup failed: %v)", wt.Path, err, cleanupErr)
 				}
 				return fmt.Errorf("failed to seed .worktreeinclude into %s: %w", wt.Path, err)
 			}

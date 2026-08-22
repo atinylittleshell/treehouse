@@ -513,8 +513,8 @@ func ResetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean boo
 }
 
 // ResetWorktreeToRefWithSeededPaths removes the pool's trusted seed inventory
-// before restoring tracked content. A nil inventory preserves the legacy
-// manifest-based cleanup needed by state created before inventories existed.
+// before restoring tracked content. A nil inventory does not authorize any
+// ignored-file deletion.
 func ResetWorktreeToRefWithSeededPaths(worktreePath, ref, expectedHead string, requireClean bool, seededPaths []string) error {
 	return resetWorktreeToRef(worktreePath, ref, expectedHead, requireClean, seededPaths, true)
 }
@@ -559,8 +559,6 @@ func resetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean boo
 	if cleanSeeds {
 		if seededPaths != nil {
 			err = removeSeededPaths(worktreePath, seededPaths)
-		} else {
-			err = removeSeededFiles(worktreePath, ref)
 		}
 		if err != nil {
 			return err
@@ -687,131 +685,6 @@ func openCleanupRoot(worktreePath string) (*os.Root, *os.File, error) {
 		return nil, nil, err
 	}
 	return root, worktree, nil
-}
-
-func removeSeededFiles(worktreePath, ref string) error {
-	trackedManifest, err := gitOutput(worktreePath, nil, "ls-tree", "-z", "--name-only", ref, "--", ".worktreeinclude")
-	if err != nil || len(trackedManifest) == 0 {
-		return err
-	}
-	manifest, err := gitOutput(worktreePath, nil, "show", ref+":.worktreeinclude")
-	if err != nil {
-		return err
-	}
-	selected, err := selectedSeedPathsForRef(worktreePath, ref, manifest)
-	if err != nil || len(selected) == 0 {
-		return err
-	}
-	root, worktree, err := openCleanupRoot(worktreePath)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	defer worktree.Close()
-	for _, name := range bytes.Split(bytes.TrimSuffix(selected, []byte{0}), []byte{0}) {
-		if err := root.Remove(filepath.FromSlash(string(name))); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	return nil
-}
-
-func selectedSeedPathsForRef(worktreePath, ref string, manifest []byte) ([]byte, error) {
-	selected, err := manifestSelectedPaths(worktreePath, manifest)
-	if err != nil || len(selected) == 0 {
-		return selected, err
-	}
-	targetTree, err := os.MkdirTemp("", "treehouse-seed-cleanup-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(targetTree)
-	root, err := os.OpenRoot(targetTree)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-
-	tree, err := gitOutput(worktreePath, nil, "ls-tree", "-rz", "-r", ref)
-	if err != nil {
-		return nil, err
-	}
-	for _, record := range bytes.Split(bytes.TrimSuffix(tree, []byte{0}), []byte{0}) {
-		metadata, name, ok := bytes.Cut(record, []byte{'\t'})
-		if !ok || filepath.Base(filepath.FromSlash(string(name))) != ".gitignore" || !bytes.HasPrefix(metadata, []byte("100")) {
-			continue
-		}
-		rel := filepath.FromSlash(string(name))
-		if err := ensureRootedDir(root, filepath.Dir(rel)); err != nil {
-			return nil, err
-		}
-		contents, err := gitOutput(worktreePath, nil, "show", ref+":"+string(name))
-		if err != nil {
-			return nil, err
-		}
-		if err := root.WriteFile(rel, contents, 0o644); err != nil {
-			return nil, err
-		}
-	}
-	for _, name := range bytes.Split(bytes.TrimSuffix(selected, []byte{0}), []byte{0}) {
-		rel := filepath.FromSlash(string(name))
-		if err := ensureRootedDirWithoutReplacement(root, filepath.Dir(rel)); err != nil {
-			return nil, err
-		}
-		file, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err != nil {
-			return nil, err
-		}
-		if err := file.Close(); err != nil {
-			return nil, err
-		}
-	}
-
-	indexPath := filepath.Join(targetTree, ".treehouse-index")
-	env := append(os.Environ(), "GIT_WORK_TREE="+targetTree, "GIT_INDEX_FILE="+indexPath)
-	if _, err := gitOutputEnv(worktreePath, env, nil, "read-tree", "--empty"); err != nil {
-		return nil, err
-	}
-	ignored, err := gitOutputEnv(worktreePath, env, nil, "ls-files", "-z", "--others", "--ignored", "--exclude-standard")
-	if err != nil {
-		return nil, err
-	}
-	ignoredPaths := make(map[string]bool)
-	for _, name := range bytes.Split(bytes.TrimSuffix(ignored, []byte{0}), []byte{0}) {
-		ignoredPaths[string(name)] = true
-	}
-	var eligible bytes.Buffer
-	for _, name := range bytes.Split(bytes.TrimSuffix(selected, []byte{0}), []byte{0}) {
-		if ignoredPaths[string(name)] {
-			eligible.Write(name)
-			eligible.WriteByte(0)
-		}
-	}
-	return eligible.Bytes(), nil
-}
-
-func ensureRootedDirWithoutReplacement(root *os.Root, name string) error {
-	if name == "." {
-		return nil
-	}
-	current := ""
-	for _, part := range strings.Split(name, string(filepath.Separator)) {
-		current = filepath.Join(current, part)
-		info, err := root.Lstat(current)
-		if os.IsNotExist(err) {
-			if err := root.Mkdir(current, 0o755); err != nil {
-				return err
-			}
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("seed path conflicts with reset target at %s", current)
-		}
-	}
-	return nil
 }
 
 func DetachWorktree(worktreePath string) error {

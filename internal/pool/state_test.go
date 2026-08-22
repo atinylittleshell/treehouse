@@ -74,6 +74,9 @@ func TestReadState_LoadsPreIdentityLease(t *testing.T) {
 	if !lease.Leased || lease.LeaseID != "" || lease.LeaseHolder != "legacy-automation" || lease.LeasedAt.IsZero() {
 		t.Fatalf("pre-identity lease loaded incorrectly: %#v", lease)
 	}
+	if !lease.SeedInventoryKnown || len(lease.SeededPaths) != 0 {
+		t.Fatalf("state from before seeding was not migrated to an empty inventory: %#v", lease)
+	}
 }
 
 // TestWriteState_LeavesNoTempFileBehind guards the temp-then-rename approach:

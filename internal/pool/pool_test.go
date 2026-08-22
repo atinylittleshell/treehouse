@@ -578,6 +578,50 @@ func TestAcquire_QuarantinesReusedWorktreeAfterPartialSeedFailure(t *testing.T) 
 	}
 }
 
+func TestAcquire_RemovesPartialSeedsWhenQuarantineWriteFails(t *testing.T) {
+	repoDir, poolDir := setupLocalRepo(t)
+	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte("partial.env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", ".gitignore")
+	runGit(t, repoDir, "commit", "-m", "ignore partial seed")
+	wtPath, err := Acquire(repoDir, poolDir, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Release(poolDir, wtPath); err != nil {
+		t.Fatal(err)
+	}
+
+	oldSeedWorktree := seedWorktree
+	seedWorktree = func(_ string, path string) ([]string, error) {
+		if err := os.WriteFile(filepath.Join(path, "partial.env"), []byte("partial\n"), 0o644); err != nil {
+			return nil, err
+		}
+		return []string{"partial.env"}, errors.New("seeding failed after partial write")
+	}
+	oldWriteState := writeState
+	writes := 0
+	writeState = func(poolDir string, state State) error {
+		writes++
+		if writes == 2 {
+			return errors.New("quarantine write failed")
+		}
+		return oldWriteState(poolDir, state)
+	}
+	t.Cleanup(func() {
+		seedWorktree = oldSeedWorktree
+		writeState = oldWriteState
+	})
+
+	if _, err := Acquire(repoDir, poolDir, 1, nil); err == nil {
+		t.Fatal("expected seeding and quarantine write to fail")
+	}
+	if _, err := os.Stat(filepath.Join(wtPath, "partial.env")); !os.IsNotExist(err) {
+		t.Fatalf("partial seed survived failed quarantine write: %v", err)
+	}
+}
+
 func TestAcquire_QuarantinesNewWorktreeWhenSeedCleanupFails(t *testing.T) {
 	repoDir, poolDir := setupLocalRepo(t)
 	oldSeedWorktree := seedWorktree
