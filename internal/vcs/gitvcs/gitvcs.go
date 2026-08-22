@@ -523,6 +523,18 @@ func resetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean boo
 	if !isCommitID(expectedHead) || !isCommitID(ref) {
 		return fmt.Errorf("worktree reset requires resolved commit IDs")
 	}
+	var cleanupIdentity os.FileInfo
+	if cleanSeeds && seededPaths != nil {
+		worktree, err := openDirectoryNoFollow(worktreePath)
+		if err != nil {
+			return err
+		}
+		defer worktree.Close()
+		cleanupIdentity, err = worktree.Stat()
+		if err != nil || !cleanupIdentity.IsDir() {
+			return fmt.Errorf("refusing to clean replaced worktree %s", worktreePath)
+		}
+	}
 	headPath, err := gitPath(worktreePath, "HEAD")
 	if err != nil {
 		return err
@@ -558,7 +570,7 @@ func resetWorktreeToRef(worktreePath, ref, expectedHead string, requireClean boo
 	}
 	if cleanSeeds {
 		if seededPaths != nil {
-			err = removeSeededPaths(worktreePath, seededPaths)
+			err = removeSeededPaths(worktreePath, seededPaths, cleanupIdentity)
 		}
 		if err != nil {
 			return err
@@ -653,8 +665,8 @@ func IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, string, e
 	return safe, ref, head, err
 }
 
-func removeSeededPaths(worktreePath string, paths []string) error {
-	root, worktree, err := openCleanupRoot(worktreePath)
+func removeSeededPaths(worktreePath string, paths []string, expected os.FileInfo) error {
+	root, worktree, err := openCleanupRoot(worktreePath, expected)
 	if err != nil {
 		return err
 	}
@@ -668,14 +680,14 @@ func removeSeededPaths(worktreePath string, paths []string) error {
 	return nil
 }
 
-func openCleanupRoot(worktreePath string) (*os.Root, *os.File, error) {
+func openCleanupRoot(worktreePath string, expected os.FileInfo) (*os.Root, *os.File, error) {
 	// Keep the no-follow handle open so a pathname swap cannot redirect cleanup.
 	worktree, err := openDirectoryNoFollow(worktreePath)
 	if err != nil {
 		return nil, nil, err
 	}
-	expected, err := worktree.Stat()
-	if err != nil || !expected.IsDir() || expected.Mode()&os.ModeSymlink != 0 {
+	current, err := worktree.Stat()
+	if err != nil || !current.IsDir() || current.Mode()&os.ModeSymlink != 0 || !os.SameFile(expected, current) {
 		worktree.Close()
 		return nil, nil, fmt.Errorf("refusing to clean replaced worktree %s", worktreePath)
 	}

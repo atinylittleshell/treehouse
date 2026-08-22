@@ -863,7 +863,11 @@ func TestEmptySeedInventoryPreservesUnignoredManifestSelection(t *testing.T) {
 	mustGit(t, worktree, "reset", "--hard", "main")
 	writeTestFile(t, worktree, "notes.txt", "keep me\n")
 
-	if err := removeSeededPaths(worktree, []string{}); err != nil {
+	identity, err := os.Stat(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := removeSeededPaths(worktree, []string{}, identity); err != nil {
 		t.Fatal(err)
 	}
 	assertTestFile(t, worktree, "notes.txt", "keep me\n")
@@ -879,7 +883,11 @@ func TestSeedInventoryRemovesSeedWhoseSourceWasDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := removeSeededPaths(worktree, []string{"secret.env"}); err != nil {
+	identity, err := os.Stat(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := removeSeededPaths(worktree, []string{"secret.env"}, identity); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(worktree, "secret.env")); !os.IsNotExist(err) {
@@ -895,10 +903,38 @@ func TestRemoveSeededPathsRejectsSymlinkedRoot(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	if err := removeSeededPaths(alias, []string{"secret.env"}); err == nil {
+	identity, err := os.Stat(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := removeSeededPaths(alias, []string{"secret.env"}, identity); err == nil {
 		t.Fatal("expected symlinked worktree root to be rejected")
 	}
 	assertTestFile(t, outside, "secret.env", "keep me\n")
+}
+
+func TestRemoveSeededPathsRejectsReplacementDirectory(t *testing.T) {
+	parent := t.TempDir()
+	worktree := filepath.Join(parent, "worktree")
+	if err := os.Mkdir(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.Stat(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(worktree, worktree+".old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, worktree, "secret.env", "keep me\n")
+
+	if err := removeSeededPaths(worktree, []string{"secret.env"}, original); err == nil {
+		t.Fatal("expected replaced worktree root to be rejected")
+	}
+	assertTestFile(t, worktree, "secret.env", "keep me\n")
 }
 
 func TestSeedWorktreeDoesNotFollowDestinationSymlink(t *testing.T) {
