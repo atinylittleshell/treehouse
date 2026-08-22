@@ -71,7 +71,8 @@ func lockFilePath(poolDir string) string {
 	return filepath.Join(poolDir, "treehouse-state.lock")
 }
 
-// ReadState loads the pool state file. A missing file is a fresh, empty pool.
+// ReadState loads the pool state file. A missing file is a fresh, empty pool
+// unless worktree directories already exist and must be recovered.
 // A file that exists but fails to parse - most likely a state file truncated
 // by a crash mid-write - is NOT a hard failure: it would otherwise brick every
 // pool command. Instead ReadState logs a loud warning and reconstructs a
@@ -84,7 +85,12 @@ func ReadState(poolDir string) (State, error) {
 	data, err := os.ReadFile(stateFilePath(poolDir))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return State{}, nil
+			if _, statErr := os.Stat(poolDir); os.IsNotExist(statErr) {
+				return State{}, nil
+			} else if statErr != nil {
+				return State{}, statErr
+			}
+			return recoverMissingStateEntries(poolDir, State{})
 		}
 		return State{}, err
 	}

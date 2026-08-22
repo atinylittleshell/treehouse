@@ -325,6 +325,28 @@ func TestAcquire_FinalStateWriteFailurePreservesSeedInventoryForRecovery(t *test
 	}
 }
 
+func TestAcquire_InitialStateWriteFailureRecoversCreatedWorktree(t *testing.T) {
+	repoDir, poolDir := setupLocalRepo(t)
+	oldWriteState := writeState
+	writeState = func(string, State) error { return errors.New("state write failed") }
+	t.Cleanup(func() { writeState = oldWriteState })
+
+	if _, err := Acquire(repoDir, poolDir, 1, nil); err == nil {
+		t.Fatal("expected initial state write to fail")
+	}
+	if _, err := os.Stat(stateFilePath(poolDir)); !os.IsNotExist(err) {
+		t.Fatalf("state file unexpectedly exists: %v", err)
+	}
+
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Worktrees) != 1 || !state.Worktrees[0].Leased || state.Worktrees[0].LeaseHolder != recoveredLeaseHolder {
+		t.Fatalf("created worktree was not conservatively recovered: %#v", state.Worktrees)
+	}
+}
+
 func TestAcquire_ReusedFinalStateWriteFailureQuarantinesNewSeeds(t *testing.T) {
 	repoDir, poolDir := setupLocalRepo(t)
 	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte("*.env\n"), 0o644); err != nil {
