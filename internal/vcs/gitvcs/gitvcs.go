@@ -656,17 +656,37 @@ func IsWorktreeSafeToReset(worktreePath, branch string) (bool, string, string, e
 }
 
 func removeSeededPaths(worktreePath string, paths []string) error {
-	root, err := os.OpenRoot(worktreePath)
+	root, worktree, err := openCleanupRoot(worktreePath)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
+	defer worktree.Close()
 	for _, name := range paths {
 		if err := root.Remove(filepath.FromSlash(name)); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
 	return nil
+}
+
+func openCleanupRoot(worktreePath string) (*os.Root, *os.File, error) {
+	// Keep the no-follow handle open so a pathname swap cannot redirect cleanup.
+	worktree, err := openDirectoryNoFollow(worktreePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	expected, err := worktree.Stat()
+	if err != nil || !expected.IsDir() || expected.Mode()&os.ModeSymlink != 0 {
+		worktree.Close()
+		return nil, nil, fmt.Errorf("refusing to clean replaced worktree %s", worktreePath)
+	}
+	root, err := openRootUnchanged(worktreePath, expected)
+	if err != nil {
+		worktree.Close()
+		return nil, nil, err
+	}
+	return root, worktree, nil
 }
 
 func removeSeededFiles(worktreePath string) error {
@@ -688,11 +708,12 @@ func removeSeededFiles(worktreePath string) error {
 	if err != nil || len(selected) == 0 {
 		return err
 	}
-	root, err := os.OpenRoot(worktreePath)
+	root, worktree, err := openCleanupRoot(worktreePath)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
+	defer worktree.Close()
 	for _, name := range bytes.Split(bytes.TrimSuffix(selected, []byte{0}), []byte{0}) {
 		if err := root.Remove(filepath.FromSlash(string(name))); err != nil && !os.IsNotExist(err) {
 			return err

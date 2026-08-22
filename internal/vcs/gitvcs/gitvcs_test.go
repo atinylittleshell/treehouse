@@ -869,6 +869,20 @@ func TestLegacySeedCleanupPreservesUnignoredManifestSelection(t *testing.T) {
 	assertTestFile(t, worktree, "notes.txt", "keep me\n")
 }
 
+func TestRemoveSeededPathsRejectsSymlinkedRoot(t *testing.T) {
+	outside := t.TempDir()
+	writeTestFile(t, outside, "secret.env", "keep me\n")
+	alias := filepath.Join(t.TempDir(), "worktree")
+	if err := os.Symlink(outside, alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if err := removeSeededPaths(alias, []string{"secret.env"}); err == nil {
+		t.Fatal("expected symlinked worktree root to be rejected")
+	}
+	assertTestFile(t, outside, "secret.env", "keep me\n")
+}
+
 func TestSeedWorktreeDoesNotFollowDestinationSymlink(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "config/settings.env\n")
 	writeTestFile(t, repo, "config/settings.env", "seeded\n")
