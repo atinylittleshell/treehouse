@@ -30,7 +30,10 @@
             ldflags = [
               "-X main.version=v${version}"
             ];
-            nativeCheckInputs = [ pkgs.git ];
+            nativeCheckInputs = [
+              pkgs.git
+              pkgs.python3
+            ];
           };
         }
       );

@@ -52,3 +52,13 @@ jobs:
 
       - name: Build
         run: go build -o treehouse${{ matrix.os == 'windows-latest' && '.exe' || '' }} .
+
+  nix-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Build Nix package
+        run: nix build -L --no-link .#default
