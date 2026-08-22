@@ -26,7 +26,9 @@ type releasePleasePackage struct {
 // expectedReleaseOutputs derives the complete set of paths release-please
 // writes for this repository from release-please-config.json. The set is
 // the source of truth for pull_request path filters: every PR-triggered
-// workflow must exclude every path here, or release PRs start creating
+// workflow must either exclude every path here or, when its trigger is keyed
+// ON one of these paths, guard every job against release-please PRs
+// (see releasePleaseUnguardedJobs); otherwise release PRs start creating
 // action_required runs again.
 func expectedReleaseOutputs(cfg releasePleaseConfig) ([]string, error) {
 	if len(cfg.Packages) == 0 {
@@ -312,6 +314,39 @@ func publishesRequiredCheck(data []byte) (bool, error) {
 	return false, nil
 }
 
+// releasePleaseUnguardedJobs returns the job IDs of a workflow whose `if:`
+// does not skip release-please PR branches. A workflow keyed to a
+// release-please output cannot exclude that output by path - the trigger key
+// is the output - so guarding every job is the alternative mechanism that
+// keeps automated release work quiet when a human pushes to a release branch;
+// release-please's own GITHUB_TOKEN-opened PRs create no runs at all. The
+// guard must name github.head_ref and both branch prefixes release.yml uses
+// to identify release PRs. An unguarded job fails closed.
+func releasePleaseUnguardedJobs(data []byte) ([]string, error) {
+	var wf struct {
+		Jobs map[string]struct {
+			If string `yaml:"if"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		return nil, err
+	}
+	if len(wf.Jobs) == 0 {
+		return nil, fmt.Errorf("workflow declares no jobs")
+	}
+	var unguarded []string
+	for job, spec := range wf.Jobs {
+		ok := strings.Contains(spec.If, "github.head_ref") &&
+			strings.Contains(spec.If, "'release-please--'") &&
+			strings.Contains(spec.If, "'release-please/'")
+		if !ok {
+			unguarded = append(unguarded, job)
+		}
+	}
+	sort.Strings(unguarded)
+	return unguarded, nil
+}
+
 func TestPullRequestWorkflowsExcludeReleasePleaseOutputs(t *testing.T) {
 	cfgBytes, err := os.ReadFile("release-please-config.json")
 	if err != nil {
@@ -382,8 +417,17 @@ func TestPullRequestWorkflowsExcludeReleasePleaseOutputs(t *testing.T) {
 			}
 		}
 		if len(missing) > 0 {
-			t.Errorf("%s pull_request filter must exclude every release-please output; missing: %s",
-				path, strings.Join(missing, ", "))
+			unguarded, err := releasePleaseUnguardedJobs(data)
+			if err != nil {
+				t.Fatalf("%s: %v", path, err)
+			}
+			if len(unguarded) > 0 {
+				t.Errorf("%s pull_request filter must exclude every release-please output (missing: %s), or every job must skip release-please branches via github.head_ref; jobs without the guard: %s",
+					path, strings.Join(missing, ", "), strings.Join(unguarded, ", "))
+			} else {
+				t.Logf("%s keys on a release-please output (%s); every job skips release-please branches instead",
+					path, strings.Join(missing, ", "))
+			}
 		}
 	}
 

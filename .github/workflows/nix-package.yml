@@ -1,0 +1,33 @@
+name: Nix Package
+
+# This workflow cannot live in ci.yml: ci.yml's pull_request trigger ignores
+# flake.nix, so a flake-only human PR would match every ignore pattern and
+# never receive the pre-merge package build. It cannot simply drop flake.nix
+# from that ignore list either, because release-please bumps flake.nix as an
+# extra-files output and path filters cannot express "flake.nix changed, but
+# not by release-please".
+#
+# Keying this dedicated trigger on the flake files closes that gap. The key is
+# itself a release-please output, so every job skips release-please branches
+# structurally instead; release-please's own GITHUB_TOKEN-opened PRs never
+# create runs at all.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - flake.nix
+      - flake.lock
+
+jobs:
+  nix-package:
+    if: ${{ !startsWith(github.head_ref, 'release-please--') && !startsWith(github.head_ref, 'release-please/') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Build Nix package
+        run: nix build -L --no-link .#default
