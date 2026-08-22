@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -59,10 +60,14 @@ type State struct {
 	Worktrees []WorktreeEntry `json:"worktrees"`
 }
 
-const stateVersion = 2
+const stateVersion = 3
 
 func stateFilePath(poolDir string) string {
 	return filepath.Join(poolDir, "treehouse-state.json")
+}
+
+func stateKeyPath(poolDir string) string {
+	return filepath.Join(poolDir, "treehouse-state.key")
 }
 
 // IsPoolDir reports whether dir is a managed pool directory (it holds a
@@ -107,9 +112,10 @@ func ReadState(poolDir string) (State, error) {
 	if s.Version < 0 || s.Version > stateVersion {
 		return State{}, fmt.Errorf("unsupported treehouse state version %d", s.Version)
 	}
+	key, keyErr := readStateKey(poolDir)
 	for i := range s.Worktrees {
 		wt := &s.Worktrees[i]
-		if s.Version != stateVersion || !wt.SeedInventoryKnown || !validSeedInventory(wt.SeededPaths) || wt.SeedInventoryDigest != seedInventoryDigest(wt.SeededPaths) {
+		if s.Version != stateVersion || keyErr != nil || !wt.SeedInventoryKnown || !validSeedInventory(wt.SeededPaths) || !hmac.Equal([]byte(wt.SeedInventoryDigest), []byte(seedInventoryDigest(key, wt.SeededPaths))) {
 			wt.Leased = true
 			wt.LeaseHolder = recoveredLeaseHolder
 			wt.SeededPaths = nil
@@ -128,18 +134,91 @@ func setSeedInventory(wt *WorktreeEntry, paths []string, known bool) {
 	wt.SeededPaths = paths
 	wt.SeedInventoryKnown = known
 	wt.SeedInventoryDigest = ""
-	if known {
-		wt.SeedInventoryDigest = seedInventoryDigest(paths)
-	}
 }
 
-func seedInventoryDigest(paths []string) string {
+func seedInventoryDigest(key []byte, paths []string) string {
 	if len(paths) == 0 {
 		paths = []string{}
 	}
 	data, _ := json.Marshal(paths)
-	digest := sha256.Sum256(data)
-	return hex.EncodeToString(digest[:])
+	digest := hmac.New(sha256.New, key)
+	_, _ = digest.Write(data)
+	return hex.EncodeToString(digest.Sum(nil))
+}
+
+func readStateKey(poolDir string) ([]byte, error) {
+	key, err := os.ReadFile(stateKeyPath(poolDir))
+	if err != nil {
+		return nil, err
+	}
+	if len(key) != sha256.Size {
+		return nil, fmt.Errorf("invalid treehouse state key")
+	}
+	return key, nil
+}
+
+func ensureStateKey(poolDir string) ([]byte, error) {
+	key, err := readStateKey(poolDir)
+	if err == nil {
+		return key, nil
+	}
+	if !os.IsNotExist(err) {
+		return nil, err
+	}
+	key = make([]byte, sha256.Size)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(stateKeyPath(poolDir), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if os.IsExist(err) {
+		return readStateKey(poolDir)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err := file.Write(key); err != nil {
+		file.Close()
+		return nil, err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return nil, err
+	}
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func prepareStateForWrite(poolDir string, s State) (State, error) {
+	key, err := ensureStateKey(poolDir)
+	if err != nil {
+		for i := range s.Worktrees {
+			if s.Worktrees[i].SeedInventoryKnown {
+				return State{}, err
+			}
+		}
+		key = make([]byte, sha256.Size)
+		if _, err := rand.Read(key); err != nil {
+			return State{}, err
+		}
+		if err := atomicWriteFile(stateKeyPath(poolDir), key, 0o600); err != nil {
+			return State{}, err
+		}
+	}
+	for i := range s.Worktrees {
+		wt := &s.Worktrees[i]
+		if wt.SeedInventoryKnown {
+			if !validSeedInventory(wt.SeededPaths) {
+				return State{}, fmt.Errorf("invalid seeded path inventory")
+			}
+			wt.SeedInventoryDigest = seedInventoryDigest(key, wt.SeededPaths)
+		} else {
+			wt.SeedInventoryDigest = ""
+		}
+	}
+	s.Version = stateVersion
+	return s, nil
 }
 
 func validSeedInventory(paths []string) bool {
@@ -265,7 +344,10 @@ func recoverCorruptState(poolDir string, parseErr error) (State, error) {
 // in the same directory, fsyncs it, commits it with the platform's replacement
 // primitive, and syncs the parent directory where the platform supports that.
 func WriteState(poolDir string, s State) error {
-	s.Version = stateVersion
+	s, err := prepareStateForWrite(poolDir, s)
+	if err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err

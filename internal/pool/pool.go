@@ -137,7 +137,10 @@ func persistState(poolDir string, state State) error {
 	if readErr != nil {
 		return err
 	}
-	state.Version = stateVersion
+	state, marshalErr := prepareStateForWrite(poolDir, state)
+	if marshalErr != nil {
+		return err
+	}
 	want, marshalErr := json.Marshal(state)
 	if marshalErr != nil {
 		return err

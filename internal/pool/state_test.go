@@ -155,17 +155,21 @@ func TestReadState_RecoversInvalidSeedInventory(t *testing.T) {
 func TestReadState_QuarantinesInventoryWithoutValidDigest(t *testing.T) {
 	poolDir := t.TempDir()
 	worktreePath := makeFakeWorktree(t, poolDir, "1", "myrepo")
+	if err := WriteState(poolDir, State{}); err != nil {
+		t.Fatal(err)
+	}
+	forgedDigest := seedInventoryDigest(nil, []string{"ignored-user-file"})
 	stateJSON := fmt.Sprintf(`{
-  "version": 2,
+  "version": 3,
   "worktrees": [{
     "name": "1",
     "path": %q,
     "created_at": "2026-07-20T12:00:00Z",
     "seeded_paths": ["ignored-user-file"],
     "seed_inventory_known": true,
-    "seed_inventory_digest": "invalid"
+    "seed_inventory_digest": %q
   }]
-}`, worktreePath)
+}`, worktreePath, forgedDigest)
 	if err := os.WriteFile(stateFilePath(poolDir), []byte(stateJSON), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -194,9 +198,27 @@ func TestWriteState_LeavesNoTempFileBehind(t *testing.T) {
 		t.Fatalf("ReadDir: %v", err)
 	}
 	for _, e := range entries {
-		if e.Name() != "treehouse-state.json" {
+		if e.Name() != "treehouse-state.json" && e.Name() != "treehouse-state.key" {
 			t.Fatalf("unexpected leftover file %q in pool dir", e.Name())
 		}
+	}
+}
+
+func TestWriteState_ReplacesInvalidKeyForUnknownInventories(t *testing.T) {
+	poolDir := t.TempDir()
+	if err := os.WriteFile(stateKeyPath(poolDir), []byte("invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := State{Worktrees: []WorktreeEntry{{Name: "1", Path: "unknown"}}}
+	if err := WriteState(poolDir, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Worktrees) != 1 || got.Worktrees[0].SeedInventoryKnown {
+		t.Fatalf("unknown inventory was not preserved safely: %#v", got.Worktrees)
 	}
 }
 
