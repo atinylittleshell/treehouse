@@ -787,6 +787,40 @@ func RemoveJJSeedAuthentication(worktreePath string) error {
 	return os.Remove(authPath)
 }
 
+func RemoveStaleJJSeedAuthentication(repoRoot, worktreePath string) error {
+	authPath := jjSeedAuthenticationPath(worktreePath)
+	auth, err := os.Lstat(authPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !auth.Mode().IsRegular() {
+		return fmt.Errorf("refusing to remove unowned jj seed authentication for %s", worktreePath)
+	}
+	if _, err := os.Stat(worktreePath); err == nil || !os.IsNotExist(err) {
+		return fmt.Errorf("refusing to remove jj seed authentication while workspace exists at %s", worktreePath)
+	}
+	contents, err := os.ReadFile(authPath)
+	if err != nil {
+		return err
+	}
+	storePath := strings.TrimSpace(string(contents))
+	if !filepath.IsAbs(storePath) {
+		return fmt.Errorf("refusing to remove unowned jj seed authentication for %s", worktreePath)
+	}
+	store, err := os.Stat(filepath.Clean(storePath))
+	if err != nil {
+		return fmt.Errorf("refusing to remove unowned jj seed authentication for %s", worktreePath)
+	}
+	expectedStore, err := os.Stat(filepath.Join(repoRoot, ".jj", "repo"))
+	if err != nil || !os.SameFile(store, expectedStore) {
+		return fmt.Errorf("refusing to remove unowned jj seed authentication for %s", worktreePath)
+	}
+	return os.Remove(authPath)
+}
+
 func jjSeedAuthenticationPath(worktreePath string) string {
 	abs, err := filepath.Abs(worktreePath)
 	if err != nil {
