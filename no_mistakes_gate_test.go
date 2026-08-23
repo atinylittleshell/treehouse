@@ -609,7 +609,7 @@ esac
 	cmd := exec.Command(bash, "-e", "-c", step.run)
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
-		if _, overridden := values[name]; !overridden {
+		if _, overridden := values[name]; !overridden && !strings.HasPrefix(name, "PR_") {
 			cmd.Env = append(cmd.Env, entry)
 		}
 	}
