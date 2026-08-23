@@ -35,6 +35,10 @@ on:
 
 permissions:
   contents: read
+  # id-token: write is required by magic-nix-cache-action for the GitHub
+  # Actions cache v2 API (OIDC token exchange for cache auth). The action
+  # is pinned to a commit SHA below, so a compromised mutable ref cannot
+  # exploit this permission.
   id-token: write
 
 concurrency:
@@ -48,15 +52,18 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        # Pinned to SHA — see Greptile feedback on mutable action refs.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
+        # Pinned to SHA — mutable refs (@main, @v22) can be repointed by a
+        # compromised maintainer account; a SHA pin makes that impossible.
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
       - name: Enable Nix binary cache (GitHub Actions cache)
-        uses: DeterminateSystems/magic-nix-cache-action@main
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
       - name: nix flake check --all-systems --no-build
         run: nix flake check --all-systems --no-build
