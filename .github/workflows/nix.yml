@@ -77,6 +77,14 @@ jobs:
         run: nix build .#default --print-build-logs
 
       - name: nix run .#default -- --version
+        # Only run the binary on push/dispatch, not pull_request. The job
+        # carries id-token: write (for magic-nix-cache-action), and `nix run`
+        # executes the built binary outside the Nix sandbox on the runner,
+        # where it can reach GitHub's OIDC endpoint. On a PR, that binary is
+        # PR-controlled code — gating this step prevents OIDC exfiltration.
+        # `nix build` above still validates compilation (inside the sandbox,
+        # no network); the smoke test runs post-merge on trusted code.
+        if: github.event_name != 'pull_request'
         run: nix run .#default -- --version
 
       - name: nix build .#treehouse
