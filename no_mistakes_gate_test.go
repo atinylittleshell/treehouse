@@ -91,8 +91,14 @@ func loadGateStep(t *testing.T) gateStep {
 		if step.Uses != requireActionPin {
 			t.Fatalf("job %q uses %q, want the pinned shared action %q", jobID, step.Uses, requireActionPin)
 		}
+		exemptAuthors := make(map[string]struct{})
+		for _, entry := range strings.FieldsFunc(step.With["exempt-authors"], func(r rune) bool {
+			return r == ',' || r == '\n' || r == '\r'
+		}) {
+			exemptAuthors[strings.TrimSpace(entry)] = struct{}{}
+		}
 		for _, login := range []string{"github-actions[bot]", "dependabot[bot]"} {
-			if !strings.Contains(step.With["exempt-authors"], login) {
+			if _, ok := exemptAuthors[login]; !ok {
 				t.Errorf("job %q must exempt %q via the action's exempt-authors input", jobID, login)
 			}
 		}
