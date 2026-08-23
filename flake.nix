@@ -79,10 +79,12 @@
           default = {
             type = "app";
             program = "${self.packages.${system}.default}/bin/${self.packages.${system}.default.meta.mainProgram}";
+            meta = self.packages.${system}.default.meta;
           };
           treehouse = {
             type = "app";
             program = "${self.packages.${system}.treehouse}/bin/${self.packages.${system}.treehouse.meta.mainProgram}";
+            meta = self.packages.${system}.treehouse.meta;
           };
         }
       );
