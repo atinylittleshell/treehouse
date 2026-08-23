@@ -1,27 +1,24 @@
 #!/usr/bin/env bash
 #
-# This script no longer decides the ordinary "PR must be raised via no-mistakes"
-# required check. That check is decided by the shared composite action
-# kunchenguid/no-mistakes/.github/actions/require-no-mistakes, pinned in
-# .github/workflows/no-mistakes-required.yml. Its bot exemptions ride the
-# action's exempt-authors input.
+# Decides whether a pull request satisfies the "PR must be raised via no-mistakes"
+# required check.
 #
-# This script has exactly one live consumer: release.yml's
-# release-pr-gate-status job, which stamps the required status context onto a
-# release-please PR head. release-please opens its PRs with GITHUB_TOKEN, so
-# GitHub creates no workflow runs for them and nothing else can report the
-# required context there.
+# A PR passes when any of these hold:
+#   * its body carries the no-mistakes pipeline signature AND a parseable v1
+#     pipeline step attestation whose head_sha equals the current PR head and
+#     in which review, test, and document are status=completed, or
+#   * it was opened by github-actions[bot] or dependabot[bot], or
+#   * it is structurally a release-please release PR (see below).
 #
-# The script still implements the signature/attestation, bot, and structural
-# release-please branches. Its only live caller deliberately overrides PR_AUTHOR
-# with a sentinel value, making the bot branch unreachable on that path. In
-# practice, only the STRUCTURAL release-please conditions (reserved branch
-# prefix, same-repository head, and Release Please body footer) can pass there.
+# The release-please exemption is deliberately STRUCTURAL, never author identity.
+# Today release-please opens treehouse's release PRs as github-actions[bot], so
+# the bot exemption already covers them, but the structural test keeps them
+# covered if release-please is ever switched to a PAT and starts arriving as the
+# human `kunchenguid`, who also opens ordinary human PRs. Exempting that login
+# would exempt every human PR too.
 #
-# The release-please test is deliberately STRUCTURAL, never author identity. If
-# release-please is ever switched to a PAT, its PRs could arrive as the human
-# `kunchenguid`, who also opens ordinary human PRs. Exempting that login would
-# exempt every human PR too.
+# Every exemption lives here rather than in a job-level `if:` so the whole gate
+# has one executable surface that tests can drive directly.
 #
 # Inputs (environment):
 #   PR_BODY, PR_AUTHOR, PR_NUMBER, PR_HEAD_REF, PR_HEAD_REPO, PR_BASE_REPO,
