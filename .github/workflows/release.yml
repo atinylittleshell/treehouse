@@ -103,10 +103,12 @@ jobs:
   # therefore never report on a release PR by itself, which would leave every
   # release blocked on a status that can never arrive.
   #
-  # Publish that status here instead, reusing the very same gate script the
-  # required check runs, so the exemption decision has exactly one
-  # implementation. The status is only ever written for a PR the script itself
-  # accepts as structurally release-please's own.
+  # The required check is now decided by the shared require-no-mistakes action.
+  # Publish that status here instead with the repository's local
+  # .github/scripts/no-mistakes-gate.sh, because the shared action can never
+  # report on a GITHUB_TOKEN PR that produces no workflow run at all. The status
+  # is only ever written for a PR the script itself accepts as structurally
+  # release-please's own.
   release-pr-gate-status:
     needs: release-please
     runs-on: ubuntu-latest
