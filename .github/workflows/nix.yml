@@ -1,0 +1,71 @@
+name: Nix flake
+
+# Validates the flake (flake.nix). Runs on PRs that touch flake-related
+# files and on pushes to main, plus manual dispatch.
+#
+# Steps, in order of what they catch:
+#   1. nix flake check --all-systems --no-build — every system's outputs
+#      evaluate (including darwin on an ubuntu runner).
+#   2. nix build .#default — the Go build + vendor deps realise for the
+#      runner's system. doCheck is false in the flake because the cmd/
+#      e2e tests need network access the Nix sandbox does not provide;
+#      the project's own CI (ci.yml) runs `go test ./...` on three OSes.
+#   3. nix run .#default -- --version — the binary actually execs and
+#      reports its version. This is the only step that catches a flake
+#      that evaluates and builds but produces a broken binary.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "flake.nix"
+      - "flake.lock"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/nix.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "flake.nix"
+      - "flake.lock"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/nix.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: nix-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: nix flake check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Enable Nix binary cache (GitHub Actions cache)
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: nix flake check --all-systems --no-build
+        run: nix flake check --all-systems --no-build
+
+      - name: nix build .#default
+        run: nix build .#default --print-build-logs
+
+      - name: nix run .#default -- --version
+        run: nix run .#default -- --version
+
+      - name: nix build .#treehouse
+        run: nix build .#treehouse --print-build-logs

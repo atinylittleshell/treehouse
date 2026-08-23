@@ -57,6 +57,14 @@ irm https://kunchenguid.github.io/treehouse/install.ps1 | iex
 
 ```sh
 nix run github:kunchenguid/treehouse
+# or pin a specific release tag:
+nix run github:kunchenguid/treehouse/v2.3.0
+```
+
+Install into your Nix profile:
+
+```sh
+nix profile add github:kunchenguid/treehouse
 ```
 
 Or add to your flake inputs:
@@ -67,6 +75,8 @@ treehouse = {
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```
+
+The flake exposes `#default` and `#treehouse` package outputs, plus `apps` for `nix run`.
 
 **Go**
 

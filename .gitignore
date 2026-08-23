@@ -2,6 +2,7 @@
 treehouse
 treehouse.exe
 result
+result-*
 dist/
 
 # IDE
