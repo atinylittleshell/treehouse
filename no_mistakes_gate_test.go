@@ -20,7 +20,17 @@ const requiredCheckContext = "PR must be raised via no-mistakes"
 
 const gateWorkflowPath = ".github/workflows/no-mistakes-required.yml"
 
-// gateStep is the one workflow step that decides the required check.
+// gateScriptPath is the gate's executable decision surface. The required
+// check itself is now decided by the shared composite action the workflow
+// delegates to (tested upstream in the no-mistakes repository), but this script
+// is still what release.yml's release-pr-gate-status job runs to stamp the
+// required context on a release-please PR - GitHub creates no workflow runs on
+// a GITHUB_TOKEN PR, so nothing else can report there. These tests therefore
+// drive the script directly.
+const gateScriptPath = "./.github/scripts/no-mistakes-gate.sh"
+
+// gateStep is the gate invocation under test: the script plus the environment
+// contract documented in its own header.
 type gateStep struct {
 	env map[string]string
 	run string
@@ -32,14 +42,22 @@ type workflowFile struct {
 		If    string `yaml:"if"`
 		Steps []struct {
 			Name string            `yaml:"name"`
+			Uses string            `yaml:"uses"`
 			Run  string            `yaml:"run"`
 			Env  map[string]string `yaml:"env"`
+			With map[string]string `yaml:"with"`
 		} `yaml:"steps"`
 	} `yaml:"jobs"`
 }
 
-// loadGateStep reads the real workflow and returns the step that runs the gate,
-// so the test drives the shipped configuration rather than a copy of it.
+// requireActionPin is the immutable commit the workflow must delegate to. A
+// mutable ref such as @main would let the pull request under judgement rewrite
+// its own judge; bumping this is a separate, deliberate pull request.
+const requireActionPin = "kunchenguid/no-mistakes/.github/actions/require-no-mistakes@32d396ac0f29135daf7fcb9964aba9d5f4e796d6"
+
+// loadGateStep verifies the shipped workflow still delegates the required check
+// to the pinned shared action, then returns the script invocation these tests
+// drive.
 func loadGateStep(t *testing.T) gateStep {
 	t.Helper()
 
@@ -56,18 +74,46 @@ func loadGateStep(t *testing.T) gateStep {
 		if job.Name != requiredCheckContext {
 			continue
 		}
-		// Every exemption must live in the script, not in a job-level `if:`,
-		// so the gate has a single executable decision surface.
+		// This workflow backs a REQUIRED status check, and a skipped job never
+		// reports the context, so the PR would block on a status that can never
+		// arrive. Exemptions must therefore ride as action inputs and keep the
+		// job running, never as a job-level `if:`.
 		if strings.TrimSpace(job.If) != "" {
-			t.Fatalf("job %q must not carry a job-level if:, it decides exemptions in the gate script", jobID)
+			t.Fatalf("job %q must not carry a job-level if:, a skipped job never reports the required check", jobID)
 		}
-		for _, step := range job.Steps {
-			if strings.TrimSpace(step.Run) == "" {
-				continue
+		if len(job.Steps) != 1 {
+			t.Fatalf("job %q has %d steps, want exactly the shared-action call", jobID, len(job.Steps))
+		}
+		step := job.Steps[0]
+		if strings.TrimSpace(step.Run) != "" {
+			t.Fatalf("job %q still carries inline enforcement; it must delegate to the shared action", jobID)
+		}
+		if step.Uses != requireActionPin {
+			t.Fatalf("job %q uses %q, want the pinned shared action %q", jobID, step.Uses, requireActionPin)
+		}
+		for _, login := range []string{"github-actions[bot]", "dependabot[bot]"} {
+			if !strings.Contains(step.With["exempt-authors"], login) {
+				t.Errorf("job %q must exempt %q via the action's exempt-authors input", jobID, login)
 			}
-			return gateStep{env: step.Env, run: step.Run}
 		}
-		t.Fatalf("job %q has no run: step", jobID)
+
+		if _, err := os.Stat(gateScriptPath); err != nil {
+			t.Fatalf("release.yml still stamps the required context with this script: %v", err)
+		}
+		// The environment contract is the one documented in the script header
+		// and supplied by release.yml's release-pr-gate-status job.
+		return gateStep{
+			run: gateScriptPath,
+			env: map[string]string{
+				"PR_BODY":      "${{ github.event.pull_request.body }}",
+				"PR_AUTHOR":    "${{ github.event.pull_request.user.login }}",
+				"PR_NUMBER":    "${{ github.event.pull_request.number }}",
+				"PR_HEAD_REF":  "${{ github.event.pull_request.head.ref }}",
+				"PR_HEAD_REPO": "${{ github.event.pull_request.head.repo.full_name }}",
+				"PR_BASE_REPO": "${{ github.event.pull_request.base.repo.full_name }}",
+				"PR_HEAD_SHA":  "${{ github.event.pull_request.head.sha }}",
+			},
+		}
 	}
 
 	t.Fatalf("%s has no job named %q", gateWorkflowPath, requiredCheckContext)
@@ -133,7 +179,7 @@ func resolveEnv(t *testing.T, step gateStep, event pullRequestEvent) []string {
 	return out
 }
 
-// runGate executes the workflow step's shell exactly as the runner would, from
+// runGate executes the gate script exactly as release.yml does, from
 // the repository root, and reports whether the required check would pass.
 func runGate(t *testing.T, step gateStep, event pullRequestEvent) (bool, string) {
 	t.Helper()

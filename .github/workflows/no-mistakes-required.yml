@@ -26,33 +26,24 @@ jobs:
     name: PR must be raised via no-mistakes
     runs-on: ubuntu-latest
     steps:
-      # Check out the BASE branch, never the PR head: the gate script must come
-      # from trusted, already-merged code so a pull request cannot weaken the
-      # check that judges it.
-      - name: Check out the gate script from the base branch
-        uses: actions/checkout@v4
+      # The enforcement itself now lives in the shared composite action in the
+      # no-mistakes repository, so this repository no longer carries its own
+      # copy of the decision logic to drift. The action never checks out or
+      # executes repository code, so the base-branch checkout this job used to
+      # perform is no longer needed.
+      #
+      # Pinned to an immutable commit, never @main: main is editable by the very
+      # pull request this gate is judging. Bumping the pin is a separate,
+      # deliberate pull request.
+      #
+      # The bot exemptions are passed as action inputs rather than a job-level
+      # `if:`. This workflow backs a REQUIRED status check, and a skipped job
+      # never reports the context, which would block the PR on a status that can
+      # never arrive - the same reason the trigger carries no path filter above.
+      # Passing them as inputs keeps the job running and reporting success.
+      - name: Verify no-mistakes signature and pipeline attestation in PR body
+        uses: kunchenguid/no-mistakes/.github/actions/require-no-mistakes@32d396ac0f29135daf7fcb9964aba9d5f4e796d6 # post-v1.57.1, untagged (action added in #819)
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          sparse-checkout: .github/scripts
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
-
-      - name: Verify no-mistakes signature in PR body
-        env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
-        run: |
-          set -eu
-          script=./.github/scripts/no-mistakes-gate.sh
-          if [ ! -f "$script" ]; then
-            # The script is read from the base branch on purpose, so a PR based
-            # on a main that predates it must say so rather than exit 127.
-            echo "::error::The no-mistakes gate script is missing from the base branch. Rebase onto a main that contains ${script}." >&2
-            exit 1
-          fi
-          bash "$script"
+          exempt-authors: |
+            github-actions[bot]
+            dependabot[bot]
