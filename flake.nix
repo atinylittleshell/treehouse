@@ -30,7 +30,11 @@
             ldflags = [
               "-X main.version=v${version}"
             ];
-            nativeCheckInputs = [ pkgs.git ];
+            # git for the VCS tests; python3 for the no-mistakes gate
+            # script's attestation parser, which the gate tests execute
+            # (GitHub runners have python3 ambiently, the nix sandbox does
+            # not - see issue #115).
+            nativeCheckInputs = [ pkgs.git pkgs.python3 ];
           };
         }
       );
