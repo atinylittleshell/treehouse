@@ -657,6 +657,20 @@ func TestReleaseWorkflowGateStatusWiring(t *testing.T) {
 			t.Fatalf("missing rejection output:\n%s", output)
 		}
 	})
+
+	// Guard against accidentally widening this release-only path by exporting
+	// the head SHA; the omission itself is not endorsed here.
+	t.Run("attestation cannot widen structural release path", func(t *testing.T) {
+		output, posts := runReleaseGateStatusStep(t, step, noMistakesBody)
+		if posts != "" {
+			t.Fatalf("attestation-only release PR wrote a status:\n%s", posts)
+		}
+		for _, want := range []string{"pull request head:    (missing)", "not a structural release-please PR"} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("missing rejection output %q:\n%s", want, output)
+			}
+		}
+	})
 }
 
 // The required check must always report on a pull request. A path filter would

@@ -14,9 +14,13 @@
 #
 # The script still implements the signature/attestation, bot, and structural
 # release-please branches. Its only live caller deliberately overrides PR_AUTHOR
-# with a sentinel value, making the bot branch unreachable on that path. In
-# practice, only the STRUCTURAL release-please conditions (reserved branch
-# prefix, same-repository head, and Release Please body footer) can pass there.
+# with a sentinel value, making the bot branch unreachable on that path. It also
+# does not export PR_HEAD_SHA, so this script sees an empty head SHA and cannot
+# pass through its attestation branch. Only the STRUCTURAL release-please
+# conditions (reserved branch prefix, same-repository head, and Release Please
+# body footer) can therefore pass there. This is load-bearing: exporting
+# PR_HEAD_SHA from release.yml would make the attestation branch reachable and
+# invalidate this guarantee.
 #
 # The release-please test is deliberately STRUCTURAL, never author identity. If
 # release-please is ever switched to a PAT, its PRs could arrive as the human
