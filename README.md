@@ -145,7 +145,9 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
   `treehouse prune --all` applies the same safety checks across every managed pool under the user-level treehouse root.
   Backing-repository-missing orphans are reported by default; `--prune-orphans` includes them as unverified prune candidates, and `--yes` is required before deletion.
   It is a dry run unless you pass `--yes`.
-- **Self-healing get** - `treehouse get` prunes stale git worktree bookkeeping (e.g. left behind by a crashed or forcibly removed worktree) before adding a new worktree, so a prunable registration never wedges the pool with a "missing but already registered worktree" error.
+- **Self-healing get** - `treehouse get` prunes stale git worktree bookkeeping (e.g. left behind by a crashed or forcibly removed worktree) before adding a new worktree, so a leftover registration never wedges the pool with a "missing but already registered worktree" error.
+  This includes the registration an interrupted `git worktree add` leaves locked, which a plain `git worktree prune` skips; a worktree you locked yourself is never touched.
+  If creating the worktree fails, `get` also removes the partial slot directory it just created, so the same slot name is not permanently poisoned.
 
 ## CLI Reference
 
@@ -367,6 +369,7 @@ jj-backend notes:
 - Merge detection uses ancestry; squash-merged work is treated as unmerged, so lifecycle commands err on the side of keeping it.
 - The default branch resolves to the `main`/`master`/`trunk` bookmark, preferring origin.
 - A pooled jj workspace whose backing repository was deleted is classified as an orphan just like a git worktree: `prune` reports it, and `prune --prune-orphans --yes` reclaims it.
+- The command deadlines in [Git command timeouts](#git-command-timeouts) bound the git backend only; jj subprocesses are not bounded yet.
 
 ### Worktree root
 
