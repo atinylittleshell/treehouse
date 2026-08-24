@@ -53,10 +53,14 @@ jobs:
         run: |
           set -euo pipefail
           body=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" | python3 -c "import json,sys; body=json.load(sys.stdin).get('body'); sys.stdout.write('' if body is None else body)")
+          delim="PRBODYEOF_$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+          while printf '%s\n' "$body" | grep -qxF "$delim"; do
+            delim="PRBODYEOF_$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+          done
           {
-            echo "body<<PRBODYEOF"
+            echo "body<<$delim"
             printf '%s\n' "$body"
-            echo "PRBODYEOF"
+            echo "$delim"
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify no-mistakes signature and pipeline attestation in PR body
