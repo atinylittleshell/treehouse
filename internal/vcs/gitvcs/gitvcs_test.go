@@ -742,3 +742,76 @@ func mustGit(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
 	}
 }
+
+func TestGitCommandTimeoutForSeparatesLongRunningCommands(t *testing.T) {
+	cases := []struct {
+		args []string
+		want time.Duration
+	}{
+		{[]string{"rev-parse", "--show-toplevel"}, defaultGitCommandTimeout},
+		{[]string{"status", "--porcelain"}, defaultGitCommandTimeout},
+		{[]string{"worktree", "prune"}, defaultGitCommandTimeout},
+		{[]string{"fetch", "origin"}, defaultGitLongCommandTimeout},
+		{[]string{"ls-remote", "--symref", "origin", "HEAD"}, defaultGitLongCommandTimeout},
+		{[]string{"worktree", "add", "--detach", "path", "ref"}, defaultGitLongCommandTimeout},
+		{[]string{"worktree", "remove", "--force", "path"}, defaultGitLongCommandTimeout},
+		{[]string{"read-tree", "--reset", "-u", "ref"}, defaultGitLongCommandTimeout},
+		{[]string{"clean", "-fd"}, defaultGitLongCommandTimeout},
+		{[]string{"checkout", "--detach"}, defaultGitLongCommandTimeout},
+		{[]string{"-c", "fetch.parallel=1", "fetch", "origin"}, defaultGitLongCommandTimeout},
+		{[]string{"-c", "core.pager=cat", "rev-parse", "HEAD"}, defaultGitCommandTimeout},
+	}
+	for _, tc := range cases {
+		if got := gitCommandTimeoutFor(tc.args...); got != tc.want {
+			t.Errorf("gitCommandTimeoutFor(%q) = %s, want %s", tc.args, got, tc.want)
+		}
+	}
+}
+
+func TestGitCommandTimeoutForHonorsEnvironmentOverrides(t *testing.T) {
+	t.Setenv(gitTimeoutEnv, "45s")
+	t.Setenv(gitLongTimeoutEnv, "3h")
+
+	if got := gitCommandTimeoutFor("status"); got != 45*time.Second {
+		t.Errorf("expected overridden standard budget, got %s", got)
+	}
+	if got := gitCommandTimeoutFor("fetch", "origin"); got != 3*time.Hour {
+		t.Errorf("expected overridden long budget, got %s", got)
+	}
+
+	t.Setenv(gitTimeoutEnv, "not-a-duration")
+	t.Setenv(gitLongTimeoutEnv, "0")
+	if got := gitCommandTimeoutFor("status"); got != defaultGitCommandTimeout {
+		t.Errorf("expected unparseable override to fall back, got %s", got)
+	}
+	if got := gitCommandTimeoutFor("fetch", "origin"); got != defaultGitLongCommandTimeout {
+		t.Errorf("expected non-positive override to fall back, got %s", got)
+	}
+}
+
+func TestGitTimeoutErrorNamesTheOverridableBudget(t *testing.T) {
+	err := gitTimeoutError("/tmp/repo", []string{"fetch", "origin"})
+	if !strings.Contains(err.Error(), gitLongTimeoutEnv) {
+		t.Errorf("expected long-budget override hint, got %q", err)
+	}
+	err = gitTimeoutError("/tmp/repo", []string{"status"})
+	if !strings.Contains(err.Error(), gitTimeoutEnv) {
+		t.Errorf("expected standard-budget override hint, got %q", err)
+	}
+}
+
+func TestRunGitRawContextIdentifiesNonExitFailures(t *testing.T) {
+	repoDir := t.TempDir()
+	missingGitDir := filepath.Join(repoDir, "gone")
+
+	_, err := runGitRawContext(context.Background(), missingGitDir, "rev-parse", "--show-toplevel")
+	if err == nil {
+		t.Fatal("expected a missing working directory to fail")
+	}
+	if !strings.Contains(err.Error(), "git rev-parse --show-toplevel in") {
+		t.Fatalf("expected the failing subcommand in the error, got %q", err)
+	}
+	if !strings.Contains(err.Error(), missingGitDir) {
+		t.Fatalf("expected the working directory in the error, got %q", err)
+	}
+}

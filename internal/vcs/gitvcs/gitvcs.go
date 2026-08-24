@@ -9,13 +9,37 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
-	gitCommandTimeout   = 2 * time.Minute
-	gitCommandWaitDelay = 250 * time.Millisecond
+	// defaultGitCommandTimeout bounds metadata commands, whose runtime does
+	// not scale with repository size or network conditions.
+	defaultGitCommandTimeout = 2 * time.Minute
+	// defaultGitLongCommandTimeout bounds commands whose legitimate runtime
+	// does scale that way (fetching, and writing out a working tree through
+	// smudge/LFS filters). They stay bounded so a stalled command still
+	// surfaces, but generously enough that a merely slow one is not killed
+	// part-way through creating a worktree.
+	defaultGitLongCommandTimeout = 30 * time.Minute
+	gitCommandWaitDelay          = 250 * time.Millisecond
+
+	gitTimeoutEnv     = "TREEHOUSE_GIT_TIMEOUT"
+	gitLongTimeoutEnv = "TREEHOUSE_GIT_LONG_TIMEOUT"
 )
+
+var longRunningGitCommands = map[string]bool{
+	"checkout":  true,
+	"clean":     true,
+	"fetch":     true,
+	"ls-remote": true,
+	"read-tree": true,
+}
+
+var longRunningGitSubcommands = map[string]map[string]bool{
+	"worktree": {"add": true, "remove": true},
+}
 
 // FindMainRepoRoot returns the main repository root for the current working
 // directory. Inside a linked worktree it resolves back to the owning
@@ -441,7 +465,7 @@ func IsHeadMergedIntoDefault(repoRoot, worktreePath string) (bool, string, error
 // detects a squash merge without treating unrelated target-branch changes as a
 // mismatch.
 func IsHeadMergedIntoRef(worktreePath, ref string) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeoutFor("merge-base"))
 	defer cancel()
 
 	return isHeadMergedIntoRefContext(ctx, worktreePath, ref)
@@ -459,7 +483,7 @@ func isHeadMergedIntoRefContext(ctx context.Context, worktreePath, ref string) (
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 		return isHeadContentMergedIntoRefContext(ctx, worktreePath, ref)
 	}
-	return false, fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+	return false, gitCombinedOutputError(worktreePath, args, out, err)
 }
 
 func isHeadContentMergedIntoRefContext(ctx context.Context, worktreePath, ref string) (bool, error) {
@@ -472,7 +496,7 @@ func isHeadContentMergedIntoRefContext(ctx context.Context, worktreePath, ref st
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 			return false, fmt.Errorf("git merge-base HEAD %s returned no common ancestor", ref)
 		}
-		return false, fmt.Errorf("git merge-base HEAD %s: %s", ref, strings.TrimSpace(string(out)))
+		return false, gitCombinedOutputError(worktreePath, args, out, err)
 	}
 	base := strings.TrimSpace(string(out))
 	if base == "" {
@@ -554,7 +578,7 @@ func IsDirty(worktreePath string) (bool, error) {
 }
 
 func runGit(dir string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeoutFor(args...))
 	defer cancel()
 
 	return runGitContext(ctx, dir, args...)
@@ -568,15 +592,6 @@ func runGitContext(ctx context.Context, dir string, args ...string) (string, err
 	return strings.TrimSpace(string(out)), nil
 }
 
-// runGitRaw keeps upstream's byte-returning entry point but routes it through
-// the same timeout budget as runGit, so the ls-tree caller cannot hang either.
-func runGitRaw(dir string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
-	defer cancel()
-
-	return runGitRawContext(ctx, dir, args...)
-}
-
 func runGitRawContext(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	out, err := gitCommandContext(ctx, dir, args...).Output()
 	if err != nil {
@@ -586,7 +601,16 @@ func runGitRawContext(ctx context.Context, dir string, args ...string) ([]byte, 
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return nil, fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(exitErr.Stderr)))
 		}
-		return nil, err
+		if errors.Is(err, exec.ErrWaitDelay) {
+			return nil, fmt.Errorf(
+				"git %s in %q left its output pipe open past %s, most likely held by a background helper (fsmonitor, credential cache, or a smudge/clean filter): %w",
+				strings.Join(args, " "),
+				gitWorkingDir(dir),
+				gitCommandWaitDelay,
+				err,
+			)
+		}
+		return nil, fmt.Errorf("git %s in %q: %w", strings.Join(args, " "), gitWorkingDir(dir), err)
 	}
 	return out, nil
 }
@@ -601,19 +625,112 @@ func gitCommandContext(ctx context.Context, dir string, args ...string) *exec.Cm
 }
 
 func gitTimeoutError(dir string, args []string) error {
-	workingDir := dir
-	if workingDir == "" {
-		if currentDir, err := os.Getwd(); err == nil {
-			workingDir = currentDir
-		} else {
-			workingDir = "."
-		}
-	}
 	return fmt.Errorf(
-		"git %s timed out in \"%s\"; check for a stale index lock (locate it with 'git rev-parse --git-path index.lock'), blocked credential prompts, or network connectivity",
+		"git %s timed out in \"%s\"; check for a stale index lock (locate it with 'git rev-parse --git-path index.lock'), blocked credential prompts, or network connectivity. Raise %s if this repository legitimately needs longer",
 		strings.Join(args, " "),
-		workingDir,
+		gitWorkingDir(dir),
+		gitTimeoutEnvFor(args...),
 	)
+}
+
+// gitCombinedOutputError reports a CombinedOutput failure. git's own message
+// is the best diagnostic when it produced one; otherwise the subcommand, the
+// working directory, and the underlying exec error keep the failure
+// identifiable instead of collapsing to an empty suffix.
+func gitCombinedOutputError(dir string, args []string, out []byte, err error) error {
+	detail := strings.TrimSpace(string(out))
+	if detail != "" {
+		if _, isExit := err.(*exec.ExitError); isExit {
+			return fmt.Errorf("git %s: %s", strings.Join(args, " "), detail)
+		}
+		return fmt.Errorf("git %s in %q: %w: %s", strings.Join(args, " "), gitWorkingDir(dir), err, detail)
+	}
+	return fmt.Errorf("git %s in %q: %w", strings.Join(args, " "), gitWorkingDir(dir), err)
+}
+
+func gitWorkingDir(dir string) string {
+	if dir != "" {
+		return dir
+	}
+	if currentDir, err := os.Getwd(); err == nil {
+		return currentDir
+	}
+	return "."
+}
+
+// gitCommandTimeoutFor resolves the deadline for a git invocation. Commands
+// whose runtime scales with repository size or network conditions get the
+// longer budget, and either budget can be overridden for repositories that
+// legitimately need more time.
+func gitCommandTimeoutFor(args ...string) time.Duration {
+	if isLongRunningGitCommand(args) {
+		return gitTimeoutFromEnv(gitLongTimeoutEnv, defaultGitLongCommandTimeout)
+	}
+	return gitTimeoutFromEnv(gitTimeoutEnv, defaultGitCommandTimeout)
+}
+
+func gitTimeoutEnvFor(args ...string) string {
+	if isLongRunningGitCommand(args) {
+		return gitLongTimeoutEnv
+	}
+	return gitTimeoutEnv
+}
+
+func isLongRunningGitCommand(args []string) bool {
+	command, subcommand := gitSubcommand(args)
+	if longRunningGitCommands[command] {
+		return true
+	}
+	return longRunningGitSubcommands[command][subcommand]
+}
+
+// gitSubcommand skips leading global options ("-c foo=bar", "--exec-path=...")
+// so classification sees the actual command.
+func gitSubcommand(args []string) (string, string) {
+	command := ""
+	subcommand := ""
+	skipValue := false
+	for _, arg := range args {
+		if skipValue {
+			skipValue = false
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			if arg == "-c" || arg == "-C" {
+				skipValue = true
+			}
+			continue
+		}
+		if command == "" {
+			command = arg
+			continue
+		}
+		subcommand = arg
+		break
+	}
+	return command, subcommand
+}
+
+func gitTimeoutFromEnv(name string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	timeout, err := time.ParseDuration(raw)
+	if err != nil || timeout <= 0 {
+		warnOnce(name+"="+raw, fmt.Sprintf("🌳 Warning: ignoring invalid %s=%q; using %s\n", name, raw, fallback))
+		return fallback
+	}
+	return timeout
+}
+
+var warnedTimeoutValues sync.Map
+
+func warnOnce(key, message string) {
+	if _, seen := warnedTimeoutValues.LoadOrStore(key, struct{}{}); seen {
+		return
+	}
+	fmt.Fprint(os.Stderr, message)
 }
 
 // Backend adapts this package's functions to the vcs.Backend interface. All
