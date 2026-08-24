@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,10 @@ const (
 
 	gitTimeoutEnv     = "TREEHOUSE_GIT_TIMEOUT"
 	gitLongTimeoutEnv = "TREEHOUSE_GIT_LONG_TIMEOUT"
+
+	// worktreeInitializingLock is the lock reason git writes while
+	// "git worktree add" is creating a worktree.
+	worktreeInitializingLock = "initializing"
 )
 
 var longRunningGitCommands = map[string]bool{
@@ -209,6 +214,92 @@ func AddWorktree(repoRoot, path, branch string) error {
 func PruneWorktrees(repoRoot string) error {
 	_, err := runGit(repoRoot, "worktree", "prune")
 	return err
+}
+
+// PruneWorktreeAt prunes stale worktree bookkeeping like PruneWorktrees and,
+// in addition, clears the registration for path when an interrupted
+// "git worktree add" left git's own lock behind. Git locks a worktree while
+// it creates it and unlocks it only on success, and "git worktree prune"
+// silently skips every locked registration, so a timed-out or crashed add
+// leaves the path registered forever and later adds fail with "is a missing
+// but locked worktree". Only git's own initializing lock is cleared, and only
+// while the worktree directory is gone, so a lock a user took (for example on
+// a worktree stored on removable media) is never disturbed.
+func PruneWorktreeAt(repoRoot, path string) error {
+	if err := PruneWorktrees(repoRoot); err != nil {
+		return err
+	}
+	locked, err := initializingLockedWorktree(repoRoot, path)
+	if err != nil || locked == "" {
+		return err
+	}
+	if _, err := runGit(repoRoot, "worktree", "unlock", locked); err != nil {
+		return err
+	}
+	return PruneWorktrees(repoRoot)
+}
+
+// initializingLockedWorktree returns git's own spelling of path when it is
+// still registered, gone from disk, and locked with the reason git writes
+// while creating a worktree. It returns an empty path in every other case,
+// including a creation still in flight (its directory already exists).
+func initializingLockedWorktree(repoRoot, path string) (string, error) {
+	out, err := runGit(repoRoot, "worktree", "list", "--porcelain")
+	if err != nil {
+		return "", err
+	}
+	want := resolveDeepestExisting(path)
+	current := ""
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if registered, ok := strings.CutPrefix(line, "worktree "); ok {
+			current = registered
+			continue
+		}
+		if line != "locked "+worktreeInitializingLock || current == "" {
+			continue
+		}
+		if !samePath(resolveDeepestExisting(current), want) {
+			continue
+		}
+		if _, err := os.Stat(current); err == nil {
+			return "", nil
+		}
+		return current, nil
+	}
+	return "", nil
+}
+
+// resolveDeepestExisting canonicalizes p for comparison with the paths git
+// prints, which are symlink-resolved. The worktree is already gone by the
+// time this runs, so it resolves the deepest ancestor that still exists and
+// re-appends the rest: a component that does not exist cannot be a symlink.
+func resolveDeepestExisting(p string) string {
+	abs, err := filepath.Abs(filepath.FromSlash(p))
+	if err != nil {
+		return filepath.Clean(filepath.FromSlash(p))
+	}
+	rest := ""
+	for cur := abs; ; {
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return abs
+		}
+		rest = filepath.Join(filepath.Base(cur), rest)
+		cur = parent
+	}
+}
+
+// samePath compares two already canonicalized paths, honoring the
+// case-insensitive file systems Windows uses.
+func samePath(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 func RemoveWorktree(repoRoot, path string) error {
@@ -755,6 +846,9 @@ func (*Backend) AddWorktree(repoRoot, path, branch string) error {
 	return AddWorktree(repoRoot, path, branch)
 }
 func (*Backend) PruneWorktrees(repoRoot string) error { return PruneWorktrees(repoRoot) }
+func (*Backend) PruneWorktreeAt(repoRoot, path string) error {
+	return PruneWorktreeAt(repoRoot, path)
+}
 func (*Backend) RemoveWorktree(repoRoot, path string) error {
 	return RemoveWorktree(repoRoot, path)
 }

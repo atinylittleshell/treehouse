@@ -815,3 +815,62 @@ func TestRunGitRawContextIdentifiesNonExitFailures(t *testing.T) {
 		t.Fatalf("expected the working directory in the error, got %q", err)
 	}
 }
+
+// TestPruneWorktreeAtClearsInterruptedCreationLock covers the recovery path
+// for an interrupted "git worktree add" and its two guards: a lock a user
+// took and a worktree still on disk are both left registered.
+func TestPruneWorktreeAtClearsInterruptedCreationLock(t *testing.T) {
+	tests := []struct {
+		name        string
+		lockReason  string
+		removeDir   bool
+		wantCleared bool
+	}{
+		{name: "interrupted creation", lockReason: worktreeInitializingLock, removeDir: true, wantCleared: true},
+		{name: "unlocked stale registration", removeDir: true, wantCleared: true},
+		{name: "user lock", lockReason: "on removable media", removeDir: true},
+		{name: "creation still in flight", lockReason: worktreeInitializingLock},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := t.TempDir()
+			base, err := filepath.EvalSymlinks(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			repoDir := filepath.Join(base, "repo")
+			wtPath := filepath.Join(base, "slot", "worktree")
+
+			mustGit(t, "", "init", "--initial-branch=main", repoDir)
+			mustGit(t, repoDir, "config", "user.email", "test@test.com")
+			mustGit(t, repoDir, "config", "user.name", "Test")
+			if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			mustGit(t, repoDir, "add", ".")
+			mustGit(t, repoDir, "commit", "-m", "initial")
+			mustGit(t, repoDir, "worktree", "add", "--detach", wtPath, "main")
+			if tt.lockReason != "" {
+				mustGit(t, repoDir, "worktree", "lock", "--reason", tt.lockReason, wtPath)
+			}
+			if tt.removeDir {
+				if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if err := PruneWorktreeAt(repoDir, wtPath); err != nil {
+				t.Fatalf("PruneWorktreeAt failed: %v", err)
+			}
+
+			out, err := exec.Command("git", "-C", repoDir, "worktree", "list", "--porcelain").CombinedOutput()
+			if err != nil {
+				t.Fatalf("git worktree list failed: %v\n%s", err, out)
+			}
+			if got := strings.Contains(string(out), wtPath); got == tt.wantCleared {
+				t.Fatalf("registration cleared=%v, want cleared=%v; list:\n%s", !got, tt.wantCleared, out)
+			}
+		})
+	}
+}

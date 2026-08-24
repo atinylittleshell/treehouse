@@ -231,7 +231,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 		// (e.g. a temporary .git/worktrees lock or permission issue) must not
 		// wedge a get that would otherwise succeed; let AddWorktree surface the
 		// real error if one exists.
-		if err := vcs.PruneWorktrees(repoRoot); err != nil {
+		if err := vcs.PruneWorktreeAt(repoRoot, wtPath); err != nil {
 			fmt.Fprintf(os.Stderr, "🌳 Warning: failed to prune stale worktrees: %v\n", err)
 		}
 
@@ -243,7 +243,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			// attempt created is only safe when the slot did not exist before,
 			// which guarantees nothing under it predates this call.
 			if slotDirIsNew {
-				cleanupPartialWorktree(repoRoot, slotDir)
+				cleanupPartialWorktree(repoRoot, slotDir, wtPath)
 			}
 			return fmt.Errorf("failed to create worktree: %w", err)
 		}
@@ -556,12 +556,16 @@ func cwdInWorktree(cwd, worktreePath string) bool {
 	return rel == "." || !filepath.IsAbs(rel) && len(rel) >= 1 && rel[0] != '.'
 }
 
-func cleanupPartialWorktree(repoRoot, slotDir string) {
+func cleanupPartialWorktree(repoRoot, slotDir, wtPath string) {
 	if err := os.RemoveAll(slotDir); err != nil {
 		fmt.Fprintf(os.Stderr, "🌳 Warning: failed to remove partially created worktree %s: %v\n", slotDir, err)
 		return
 	}
-	if err := vcs.PruneWorktrees(repoRoot); err != nil {
+	// PruneWorktreeAt, not PruneWorktrees: git locks a worktree while it
+	// creates it and unlocks it only on success, and a plain prune skips
+	// locked registrations. Leaving that lock behind would keep the slot
+	// registered and wedge every later get on this pool.
+	if err := vcs.PruneWorktreeAt(repoRoot, wtPath); err != nil {
 		fmt.Fprintf(os.Stderr, "🌳 Warning: failed to prune the registration for partially created worktree %s: %v\n", slotDir, err)
 	}
 }
