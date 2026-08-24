@@ -85,10 +85,16 @@ func loadGateStep(t *testing.T) gateStep {
 		if strings.TrimSpace(job.If) != "" {
 			t.Fatalf("job %q must not carry a job-level if:, a skipped job never reports the required check", jobID)
 		}
-		if len(job.Steps) != 1 {
-			t.Fatalf("job %q has %d steps, want exactly the shared-action call", jobID, len(job.Steps))
+		if len(job.Steps) == 0 {
+			t.Fatalf("job %q has no steps, want the shared-action call", jobID)
 		}
 		step := job.Steps[0]
+		for _, s := range job.Steps {
+			if s.Uses == requireActionPin {
+				step = s
+				break
+			}
+		}
 		if strings.TrimSpace(step.Run) != "" {
 			t.Fatalf("job %q still carries inline enforcement; it must delegate to the shared action", jobID)
 		}

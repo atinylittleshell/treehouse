@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 # GitHub concurrency groups retain at most one pending run, replacing older
 # pending runs even when cancel-in-progress is false. Give body-bearing events
@@ -38,12 +39,34 @@ jobs:
       #
       # The bot exemptions are passed as action inputs rather than a job-level
       # `if:`. This workflow backs a REQUIRED status check, and a skipped job
-      # never reports the context, which would block the PR on a status that can
-      # never arrive - the same reason the trigger carries no path filter above.
+      # never reports the context, which would block the PR on a status that
+      # can never arrive - the same reason the trigger carries no path filter above.
       # Passing them as inputs keeps the job running and reporting success.
+      # The pull_request/synchronize payload does not always include the PR body,
+      # so the shared action cannot rely on GITHUB_EVENT_PATH for that fact. Fetch
+      # the current body from the GitHub API so the gate always judges the actual
+      # PR description.
+      - name: Fetch current PR body
+        id: pr-body
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          body=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" | python3 -c "import json,sys; body=json.load(sys.stdin).get('body'); sys.stdout.write('' if body is None else body)")
+          {
+            echo "body<<PRBODYEOF"
+            printf '%s\n' "$body"
+            echo "PRBODYEOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Verify no-mistakes signature and pipeline attestation in PR body
         uses: kunchenguid/no-mistakes/.github/actions/require-no-mistakes@32d396ac0f29135daf7fcb9964aba9d5f4e796d6 # post-v1.57.1, untagged (action added in #819)
         with:
+          pr-body: ${{ steps.pr-body.outputs.body }}
+          pr-head-sha: ${{ github.event.pull_request.head.sha }}
+          pr-head-ref: ${{ github.event.pull_request.head.ref }}
+          pr-author: ${{ github.event.pull_request.user.login }}
+          pr-number: ${{ github.event.pull_request.number }}
           exempt-authors: |
             github-actions[bot]
             dependabot[bot]
