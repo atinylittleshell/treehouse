@@ -336,11 +336,26 @@ func mergeRefForWorktree(worktreePath string, context pruneContext) (string, err
 // second reading against the base it was cut from and parked on. A pool
 // configured with a base the default does not contain would otherwise have
 // every pristine slot classified as holding unlanded work, and neither prune
-// nor destroy could reclaim it. It answers only a definitive "not merged":
-// callers reach it after the default-ref check succeeded, so an unverifiable
-// slot keeps that check's fail-closed classification, and an unrecorded or
-// unresolvable base reports false.
+// nor destroy could reclaim it.
+//
+// A slot recording the repository default gets no second reading: acquire
+// records a base on every slot, so consulting it there would quietly replace
+// the origin-validated default ref with whichever of local and origin branchRef
+// ranks higher, and start deleting slots parked on an unpushed local default
+// for pools that never opted into base_branch.
+//
+// It answers only a definitive "not merged": callers reach it after the
+// default-ref check succeeded, so an unverifiable slot keeps that check's
+// fail-closed classification, and an unrecorded, unresolvable, or
+// indistinguishable base reports false.
 func headLandedOnItsBase(worktreePath, baseBranch string) bool {
+	if baseBranch == "" {
+		return false
+	}
+	defaultBranch, err := vcs.DefaultBranchForWorktree(worktreePath)
+	if err != nil || defaultBranch == baseBranch {
+		return false
+	}
 	ref := vcs.BaseBranchMergeRef(worktreePath, baseBranch)
 	if ref == "" {
 		return false

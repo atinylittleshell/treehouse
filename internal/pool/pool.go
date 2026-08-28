@@ -325,17 +325,6 @@ func headMergedIntoRecordedBase(wt WorktreeEntry, requested, head string) bool {
 	return err == nil && safe && recordedHead == head
 }
 
-// recordedBaseBranch reports the base a managed slot was last cut from, or ""
-// when it is unknown. Read without the state lock: it only chooses where a
-// reset lands, and a stale answer is no worse than the default.
-func recordedBaseBranch(poolDir, worktreePath string) string {
-	entry, err := FindByPath(poolDir, worktreePath)
-	if err != nil || entry == nil {
-		return ""
-	}
-	return entry.BaseBranch
-}
-
 // resolveBaseBranch picks the branch worktrees are cut from and reset to: the
 // explicitly requested one, otherwise the inferred default.
 //
@@ -421,22 +410,12 @@ func ValidateReleasePreconditions(poolDir, worktreePath string, preconditions Re
 // recycled and every acquire grows the pool until max_trees.
 func ReleaseConditional(poolDir, worktreePath, baseBranch string, preconditions ReleasePreconditions, beforeReset func() error) error {
 	markerless := vcs.WorktreeBackendName(worktreePath) == ""
-	branch, fallback := "", ""
+	// Resolved before the state lock so a failure surfaces before beforeReset
+	// kills the worktree's processes. It is only fatal when the slot has no
+	// base of its own to park on instead.
+	defaultBranch, defaultErr := "", error(nil)
 	if !markerless {
-		if baseBranch == "" {
-			baseBranch = recordedBaseBranch(poolDir, worktreePath)
-		}
-		// The default is resolved up front so a failure surfaces before
-		// beforeReset kills the worktree's processes. It is only fatal when
-		// there is no requested base to park on instead.
-		resolved, err := vcs.DefaultBranchForWorktree(worktreePath)
-		if err != nil && baseBranch == "" {
-			return err
-		}
-		branch, fallback = resolved, resolved
-		if baseBranch != "" {
-			branch = baseBranch
-		}
+		defaultBranch, defaultErr = vcs.DefaultBranchForWorktree(worktreePath)
 	}
 	return WithStateLock(poolDir, func() error {
 		state, err := ReadState(poolDir)
@@ -447,6 +426,20 @@ func ReleaseConditional(poolDir, worktreePath, baseBranch string, preconditions 
 		wt, err := releasableWorktree(&state, worktreePath, preconditions)
 		if err != nil {
 			return err
+		}
+		branch, fallback := "", ""
+		if !markerless {
+			requested := baseBranch
+			if requested == "" {
+				requested = wt.BaseBranch
+			}
+			if defaultErr != nil && requested == "" {
+				return defaultErr
+			}
+			branch, fallback = defaultBranch, defaultBranch
+			if requested != "" {
+				branch = requested
+			}
 		}
 		if beforeReset != nil {
 			if err := beforeReset(); err != nil {

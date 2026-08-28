@@ -67,10 +67,16 @@ func TestBranchExistsReportsMissingBranch(t *testing.T) {
 // "merged into the base" question assumes a base that advances.
 func TestBranchExistsRejectsNonBranchRefs(t *testing.T) {
 	repoDir := setupBaseBranchRepo(t)
+	// main needs a parent, or main^ and main~1 would not resolve for any
+	// implementation and the assertion would hold vacuously.
+	mustGit(t, repoDir, "commit", "--allow-empty", "-m", "second")
 	mustGit(t, repoDir, "tag", "v1.0.0")
 
 	head := gitOutput(t, repoDir, "rev-parse", "HEAD")
-	for _, ref := range []string{"v1.0.0", head, "origin/main", "HEAD"} {
+	// The trailing forms are revision EXPRESSIONS: rev-parse --verify resolves
+	// them against a real branch, so a prefix check alone would pin the base to
+	// a commit that never advances.
+	for _, ref := range []string{"v1.0.0", head, "origin/main", "HEAD", "main^", "main~1", "main@{0}"} {
 		if BranchExists(repoDir, ref) {
 			t.Errorf("BranchExists(%q) = true, want false: only branch names are accepted", ref)
 		}

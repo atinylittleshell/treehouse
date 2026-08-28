@@ -561,3 +561,67 @@ func TestAcquire_SkipsLegacySlotHoldingWorkBeyondTheDefault(t *testing.T) {
 		t.Fatalf("expected unlanded commit preserved on disk: %v", err)
 	}
 }
+
+// A pool that never opted into base_branch must keep the origin-validated
+// default ref as its only merge target. Acquire records a base on every slot,
+// so consulting it here would start deleting slots parked on an unpushed local
+// default for users who never touched this feature.
+func TestPrune_SkipsSlotMergedOnlyIntoALocalAheadDefault(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	if err := os.WriteFile(filepath.Join(repoDir, "unpushed.txt"), []byte("unpushed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "unpushed.txt")
+	runGit(t, repoDir, "commit", "-m", "unpushed commit on local main")
+	localTip := gitOut(t, repoDir, "rev-parse", "HEAD")
+
+	wtPath, err := Acquire(repoDir, poolDir, 1, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	if got := gitOut(t, wtPath, "rev-parse", "HEAD"); got != localTip {
+		t.Fatalf("fixture needs the slot cut from the local-ahead main: HEAD = %s, want %s", got, localTip)
+	}
+	if err := Release(poolDir, wtPath); err != nil {
+		t.Fatalf("Release failed: %v", err)
+	}
+
+	result, err := Prune(repoDir, poolDir, true, nil)
+	if err != nil {
+		t.Fatalf("Prune failed: %v", err)
+	}
+	if len(result.Candidates) != 0 {
+		t.Fatalf("expected no prune candidate for an unpushed local default, got %#v", result.Candidates)
+	}
+	if !hasSkippedCategory(result.Skipped, wtPath, PruneSkipUnmerged) {
+		t.Fatalf("expected an unmerged skip, got %#v", result.Skipped)
+	}
+}
+
+func TestDestroyPool_SkipsSlotMergedOnlyIntoALocalAheadDefault(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	if err := os.WriteFile(filepath.Join(repoDir, "unpushed.txt"), []byte("unpushed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "unpushed.txt")
+	runGit(t, repoDir, "commit", "-m", "unpushed commit on local main")
+
+	wtPath, err := Acquire(repoDir, poolDir, 1, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	if err := Release(poolDir, wtPath); err != nil {
+		t.Fatalf("Release failed: %v", err)
+	}
+
+	result, err := DestroyPool(poolDir, DestroyOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("DestroyPool failed: %v", err)
+	}
+	if len(result.Planned) != 0 {
+		t.Fatalf("expected no planned destroy for an unpushed local default, got %#v", result.Planned)
+	}
+	if !hasDestroySkip(result.Skipped, wtPath, DestroyUnmerged, IncludeUnlandedFlag) {
+		t.Fatalf("expected an unmerged skip needing --include-unlanded, got %#v", result.Skipped)
+	}
+}
