@@ -338,11 +338,12 @@ func mergeRefForWorktree(worktreePath string, context pruneContext) (string, err
 // every pristine slot classified as holding unlanded work, and neither prune
 // nor destroy could reclaim it.
 //
-// A slot recording the repository default gets no second reading: acquire
-// records a base on every slot, so consulting it there would quietly replace
-// the origin-validated default ref with whichever of local and origin branchRef
-// ranks higher, and start deleting slots parked on an unpushed local default
-// for pools that never opted into base_branch.
+// Only an explicitly requested base is ever recorded, so an empty field means
+// the pool never opted into base_branch, not that the recorded base happens
+// to equal the default. Consulting a base there anyway would quietly replace
+// the origin-validated default ref with whichever of local and origin
+// branchRef ranks higher, and start deleting slots parked on an unpushed
+// local default for pools that never opted in.
 //
 // It answers only a definitive "not merged": callers reach it after the
 // default-ref check succeeded, so an unverifiable slot keeps that check's

@@ -300,10 +300,14 @@ func leaseInfoFromEntry(wt WorktreeEntry, baseBranch string) LeaseInfo {
 // work in the requested one; a slot holding commits beyond it is not, and is
 // still skipped.
 //
-// An entry written before base_branch existed records no base, which is the
-// normal state of every pool being upgraded, so the repository default stands
-// in as its implicit base. That widens nothing: prune already reclaims exactly
-// those slots as merged into the default ref.
+// An entry written before base_branch existed, and any inferred acquisition,
+// records no base, so the repository default stands in as its implicit base
+// HERE ONLY: prune and destroy deliberately give such a slot no second
+// reading and stay on the origin-validated default ref. The asymmetry is
+// safe because acquire only RESETS a slot whose HEAD stays reachable from a
+// local branch, while prune and destroy DELETE and so must stay conservative
+// - which is exactly what keeps non-opt-in pools on the pre-feature deletion
+// semantics.
 //
 // Fails closed on an unresolvable base, an errored check, and a HEAD that moved
 // between the two readings. A base equal to the requested branch answers false
