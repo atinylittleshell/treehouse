@@ -266,6 +266,39 @@ func GetRemoteURL(repoRoot string) (string, error) {
 	return backendFor(repoRoot).GetRemoteURL(repoRoot)
 }
 
+// VerifyBaseBranch checks that an explicitly requested base branch can be
+// resolved for repoRoot, before anything is created or reset. An explicit base
+// is a promise, so an unresolvable one is an error rather than a silent
+// fallback to the inferred default: a caller who asked for develop and quietly
+// got main finds out only after work is committed onto the wrong base.
+//
+// Verifying up front also keeps a typo from being invisible. Acquire skips any
+// slot whose safety check fails, so without this a misspelled base would look
+// like a pool with nothing reusable and would keep creating worktrees until
+// max_trees was exhausted, never naming the real cause.
+//
+// This deliberately does NOT go through the Backend interface. Cutting from a
+// chosen branch is a git-only opt-in for now; the jj backend's own branchRef is
+// generic enough that the path would probably work, but "probably" is not the
+// bar for an option that decides which commit a worktree is reset to. Until
+// that path is exercised end to end against a real jj repository, an explicit
+// base under jj fails closed with an actionable error. Adding a method to
+// Backend instead would put an unexercised implementation on the destructive
+// path and leave it dead behind this refusal.
+func VerifyBaseBranch(repoRoot, branch string) error {
+	if branch == "" {
+		return nil
+	}
+	backend := backendFor(repoRoot)
+	if backend.Name() != "git" {
+		return fmt.Errorf("an explicit base branch is only supported by the git backend, but this repository selects %s; remove base_branch (or --base) to use the inferred default bookmark", backend.Name())
+	}
+	if !gitvcs.BranchExists(repoRoot, branch) {
+		return fmt.Errorf("base branch %q does not exist: no local branch %s and no remote-tracking branch origin/%s (fetch first, or fix base_branch/--base)", branch, branch, branch)
+	}
+	return nil
+}
+
 // AddWorktree creates a new worktree at path based on branch.
 func AddWorktree(repoRoot, path, branch string) error {
 	return backendFor(repoRoot).AddWorktree(repoRoot, path, branch)
