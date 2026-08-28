@@ -380,9 +380,9 @@ treehouse get --lease --base release/2.x --json
 A few things worth knowing:
 
 - **Worktrees stay in detached HEAD.** This selects the commit a worktree starts at; it does not create or check out a branch. There is no `-b` shorthand, because `-b` means branch *creation* in git and this flag creates nothing.
-- **Branch names only.** `develop`, not `origin/develop`, a tag, or a commit SHA. Whichever of `develop` and `origin/develop` is further ahead wins, preferring `origin` when they have diverged — exactly how the inferred default behaves.
+- **Branch names only.** `develop`, not `origin/develop`, a tag, or a commit SHA. Whichever of `develop` and `origin/develop` is further ahead wins, preferring `origin` when they have diverged — exactly how the inferred default behaves. A tag sharing a branch's name never wins: refs are resolved fully qualified.
 - **It fails closed.** A base that resolves to neither a local branch nor `origin/<branch>` is an error; Treehouse never falls back to the inferred default, which would hand you a worktree cut from the wrong branch and report success. `treehouse status` shows the resolved base, and flags a configured one it cannot resolve.
-- **Returned worktrees are parked on the configured base**, so the pool keeps recycling. A slot parked elsewhere could not be reused whenever the base is not a descendant of it.
+- **Returned worktrees are parked on the base they were cut from**, so the pool keeps recycling. `base_branch` wins when it is set; otherwise a slot acquired with `--base` is parked back on that branch. A slot parked elsewhere could not be reused whenever the base is not a descendant of it.
 - **Existing pools migrate on their own.** Slots cut from the old default are recycled onto the new base as soon as the old base is an ancestor of it. A slot holding commits the new base does not contain is still refused, as always.
 - **Git backend only for now.** Under the jj backend an explicit base fails with a clear error rather than silently using the default bookmark.
 

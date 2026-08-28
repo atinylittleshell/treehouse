@@ -238,3 +238,54 @@ func TestStatusJSONRemainsATopLevelArray(t *testing.T) {
 		t.Errorf("unexpected human base line in JSON output:\n%s", stdout)
 	}
 }
+
+// Exercises returnBaseBranch: `treehouse return <path>` must park the slot on
+// the configured base, the same place `get` leaves one.
+func TestReturnParksWorktreeOnConfiguredBaseBranch(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	addE2EBranch(t, repoDir, "develop", "develop-only.txt")
+	writeRepoConfig(t, repoDir, "base_branch = \"develop\"\n")
+	gitCmd(t, repoDir, "commit", "--allow-empty", "-m", "hotfix on main")
+	gitCmd(t, repoDir, "push", "origin", "main")
+	developTip := gitCmd(t, repoDir, "rev-parse", "develop")
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease")
+	if code != 0 {
+		t.Fatalf("get --lease failed: %s", stderr)
+	}
+	wtPath := strings.TrimSpace(stdout)
+
+	if _, stderr, code = runTreehouse(t, repoDir, homeDir, nil, "return", wtPath); code != 0 {
+		t.Fatalf("return failed (code %d): %s", code, stderr)
+	}
+	if got := gitCmd(t, wtPath, "rev-parse", "HEAD"); got != developTip {
+		t.Errorf("returned slot HEAD = %s, want develop tip %s", got, developTip)
+	}
+}
+
+// A pool driven only by --base, with no base_branch in config, must recycle its
+// slot instead of building a new one per acquisition.
+func TestGetBaseFlagRecyclesWithoutConfiguredBaseBranch(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	addE2EBranch(t, repoDir, "develop", "develop-only.txt")
+	writeRepoConfig(t, repoDir, "max_trees = 2\n")
+	gitCmd(t, repoDir, "commit", "--allow-empty", "-m", "hotfix on main")
+	gitCmd(t, repoDir, "push", "origin", "main")
+
+	var first string
+	for i := 1; i <= 3; i++ {
+		stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease", "--base", "develop")
+		if code != 0 {
+			t.Fatalf("acquire %d failed (code %d): %s", i, code, stderr)
+		}
+		wtPath := strings.TrimSpace(stdout)
+		if i == 1 {
+			first = wtPath
+		} else if wtPath != first {
+			t.Fatalf("acquire %d built a new slot %s instead of recycling %s", i, wtPath, first)
+		}
+		if _, stderr, code = runTreehouse(t, repoDir, homeDir, nil, "return", wtPath); code != 0 {
+			t.Fatalf("return %d failed: %s", i, stderr)
+		}
+	}
+}

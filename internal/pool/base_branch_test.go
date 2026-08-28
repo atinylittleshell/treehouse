@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kunchenguid/treehouse/internal/vcs"
 )
 
 // addBranch creates branch at HEAD plus one commit carrying marker, then
@@ -216,5 +218,92 @@ func TestRelease_WithoutBaseBranchParksOnRepositoryDefault(t *testing.T) {
 	}
 	if got := gitOut(t, wtPath, "rev-parse", "HEAD"); got != mainTip {
 		t.Errorf("returned worktree HEAD = %s, want main tip %s", got, mainTip)
+	}
+}
+
+// A pool with no configured base, driven entirely by --base, must still recycle.
+// Parking such a slot on the repository default made every acquire build a new
+// slot until max_trees, then report a pool that status showed as available.
+func TestRelease_ParksSlotOnTheBaseItWasAcquiredFrom(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	developTip := addBranch(t, repoDir, "develop", "develop-only.txt")
+	if err := os.WriteFile(filepath.Join(repoDir, "hotfix.txt"), []byte("hotfix\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "hotfix.txt")
+	runGit(t, repoDir, "commit", "-m", "hotfix on main")
+
+	var first string
+	for i := 0; i < 3; i++ {
+		got, err := AcquireWithOptions(repoDir, poolDir, 2, nil, AcquireOptions{BaseBranch: "develop"})
+		if err != nil {
+			t.Fatalf("acquire %d failed: %v", i+1, err)
+		}
+		if i == 0 {
+			first = got
+		} else if got != first {
+			t.Fatalf("acquire %d created slot %s instead of recycling %s", i+1, got, first)
+		}
+		// No configured base: the caller passes "" exactly as `treehouse return`
+		// does when treehouse.toml has no base_branch.
+		if err := ReleaseConditional(poolDir, got, "", ReleasePreconditions{}, nil); err != nil {
+			t.Fatalf("release %d failed: %v", i+1, err)
+		}
+		if head := gitOut(t, got, "rev-parse", "HEAD"); head != developTip {
+			t.Fatalf("release %d parked the slot at %s, want develop tip %s", i+1, head, developTip)
+		}
+	}
+}
+
+// An explicitly configured base must not be held hostage by the inference it
+// exists to replace: returning has to work even where no default can be found.
+func TestRelease_WithBaseBranchSurvivesUnresolvableDefault(t *testing.T) {
+	repoDir, poolDir := setupLocalRepo(t)
+	developTip := addBranch(t, repoDir, "develop", "develop-only.txt")
+
+	wtPath, err := AcquireWithOptions(repoDir, poolDir, 1, nil, AcquireOptions{BaseBranch: "develop"})
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	// Detach the main repository and remove every default-branch signal.
+	runGit(t, repoDir, "checkout", "--detach")
+	runGit(t, repoDir, "config", "init.defaultBranch", "")
+	if _, err := vcs.DefaultBranchForWorktree(wtPath); err == nil {
+		t.Skip("default branch is still resolvable in this environment")
+	}
+
+	if err := ReleaseConditional(poolDir, wtPath, "develop", ReleasePreconditions{}, nil); err != nil {
+		t.Fatalf("release must not fail over an unresolvable default when a base is set: %v", err)
+	}
+	if head := gitOut(t, wtPath, "rev-parse", "HEAD"); head != developTip {
+		t.Errorf("slot parked at %s, want develop tip %s", head, developTip)
+	}
+}
+
+// The base can vanish between the caller's check and the reset. Returning must
+// degrade to the default rather than strand the reservation.
+func TestRelease_FallsBackWhenBaseBranchDisappears(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	addBranch(t, repoDir, "develop", "develop-only.txt")
+	mainTip := gitOut(t, repoDir, "rev-parse", "HEAD")
+
+	wtPath, err := AcquireWithOptions(repoDir, poolDir, 1, nil, AcquireOptions{BaseBranch: "develop"})
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	runGit(t, repoDir, "branch", "-D", "develop")
+
+	if err := ReleaseConditional(poolDir, wtPath, "develop", ReleasePreconditions{}, nil); err != nil {
+		t.Fatalf("release must degrade to the default, not fail: %v", err)
+	}
+	if head := gitOut(t, wtPath, "rev-parse", "HEAD"); head != mainTip {
+		t.Errorf("slot parked at %s, want main tip %s", head, mainTip)
+	}
+	entry, err := FindByPath(poolDir, wtPath)
+	if err != nil || entry == nil {
+		t.Fatalf("slot missing from state after release: %v", err)
+	}
+	if entry.Leased || entry.OwnerPID != 0 {
+		t.Errorf("reservation not cleared: %+v", entry)
 	}
 }

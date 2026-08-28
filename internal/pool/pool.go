@@ -205,6 +205,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			if err := vcs.ResetWorktreeToRef(wt.Path, resetRef, head, true); err != nil {
 				continue
 			}
+			state.Worktrees[i].BaseBranch = branch
 			if err := markAcquired(&state.Worktrees[i], opts); err != nil {
 				return err
 			}
@@ -251,9 +252,10 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 		}
 
 		entry := WorktreeEntry{
-			Name:      name,
-			Path:      wtPath,
-			CreatedAt: time.Now(),
+			Name:       name,
+			Path:       wtPath,
+			CreatedAt:  time.Now(),
+			BaseBranch: branch,
 		}
 		if err := markAcquired(&entry, opts); err != nil {
 			return err
@@ -285,6 +287,17 @@ func leaseInfoFromEntry(wt WorktreeEntry, baseBranch string) LeaseInfo {
 		LeasedAt:    wt.LeasedAt,
 		BaseBranch:  baseBranch,
 	}
+}
+
+// recordedBaseBranch reports the base a managed slot was last cut from, or ""
+// when it is unknown. Read without the state lock: it only chooses where a
+// reset lands, and a stale answer is no worse than the default.
+func recordedBaseBranch(poolDir, worktreePath string) string {
+	entry, err := FindByPath(poolDir, worktreePath)
+	if err != nil || entry == nil {
+		return ""
+	}
+	return entry.BaseBranch
 }
 
 // resolveBaseBranch picks the branch worktrees are cut from and reset to: the
@@ -366,20 +379,25 @@ func ValidateReleasePreconditions(poolDir, worktreePath string, preconditions Re
 // slot is left for destroy; acquire refuses to reuse it.
 //
 // baseBranch parks the returned slot on the branch the pool cuts from; empty
-// keeps the inferred default. Callers must pass an already-verified branch, or
-// a failed reset leaves the reservation held. Parking is what keeps the slot
-// reusable: acquire recycles only when HEAD is merged into the base it resets
-// to, so a slot parked off-base is never recycled and every acquire grows the
-// pool until max_trees.
+// falls back to the base the slot was acquired with, then to the inferred
+// default. Parking is what keeps the slot reusable: acquire recycles only when
+// HEAD is merged into the base it resets to, so a slot parked off-base is never
+// recycled and every acquire grows the pool until max_trees.
 func ReleaseConditional(poolDir, worktreePath, baseBranch string, preconditions ReleasePreconditions, beforeReset func() error) error {
 	markerless := vcs.WorktreeBackendName(worktreePath) == ""
-	branch := ""
+	branch, fallback := "", ""
 	if !markerless {
+		if baseBranch == "" {
+			baseBranch = recordedBaseBranch(poolDir, worktreePath)
+		}
+		// The default is resolved up front so a failure surfaces before
+		// beforeReset kills the worktree's processes. It is only fatal when
+		// there is no requested base to park on instead.
 		resolved, err := vcs.DefaultBranchForWorktree(worktreePath)
-		if err != nil {
+		if err != nil && baseBranch == "" {
 			return err
 		}
-		branch = resolved
+		branch, fallback = resolved, resolved
 		if baseBranch != "" {
 			branch = baseBranch
 		}
@@ -401,8 +419,19 @@ func ReleaseConditional(poolDir, worktreePath, baseBranch string, preconditions 
 		}
 		if !markerless {
 			if err := vcs.ResetWorktree(worktreePath, branch); err != nil {
-				return err
+				// The base resolved when the caller checked it but not now (it
+				// was deleted in between). Park on the default rather than
+				// strand the reservation with the processes already killed.
+				if fallback == "" || fallback == branch {
+					return err
+				}
+				fmt.Fprintf(os.Stderr, "🌳 Warning: cannot park the worktree on %q (%v); using %s instead.\n", branch, err, fallback)
+				if err := vcs.ResetWorktree(worktreePath, fallback); err != nil {
+					return err
+				}
+				branch = fallback
 			}
+			wt.BaseBranch = branch
 		}
 
 		wt.OwnerPID = 0
