@@ -20,6 +20,7 @@ type leaseJSONResult struct {
 	LeaseID     string    `json:"lease_id"`
 	LeaseHolder string    `json:"lease_holder"`
 	LeasedAt    time.Time `json:"leased_at"`
+	BaseBranch  string    `json:"base_branch"`
 }
 
 type statusJSONResult struct {

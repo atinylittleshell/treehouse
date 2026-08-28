@@ -71,7 +71,7 @@ func TestReturnWorktreeToPool_SurvivingWriterBlocksReset(t *testing.T) {
 	)
 	t.Cleanup(restore)
 
-	err := returnWorktreeToPool(poolDir, wtPath)
+	err := returnWorktreeToPool(poolDir, wtPath, "")
 	if err == nil {
 		t.Fatal("expected returnWorktreeToPool to fail when a live writer remains")
 	}
@@ -99,7 +99,7 @@ func TestReturnWorktreeToPool_QuietWorktreeResetsAndReturns(t *testing.T) {
 	)
 	t.Cleanup(restore)
 
-	if err := returnWorktreeToPool(poolDir, wtPath); err != nil {
+	if err := returnWorktreeToPool(poolDir, wtPath, ""); err != nil {
 		t.Fatalf("expected a quiet worktree to return cleanly, got: %v", err)
 	}
 	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {

@@ -1,0 +1,181 @@
+package cmd
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// addE2EBranch creates branch at HEAD plus one commit carrying marker, pushes
+// it, and returns to main. The marker file makes it verifiable from the
+// worktree contents which branch a slot was cut from.
+func addE2EBranch(t *testing.T, repoDir, branch, marker string) {
+	t.Helper()
+	gitCmd(t, repoDir, "checkout", "-b", branch)
+	if err := os.WriteFile(filepath.Join(repoDir, marker), []byte(marker+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, repoDir, "add", marker)
+	gitCmd(t, repoDir, "commit", "-m", "on "+branch)
+	gitCmd(t, repoDir, "push", "origin", branch)
+	gitCmd(t, repoDir, "checkout", "main")
+}
+
+func writeRepoConfig(t *testing.T, repoDir, contents string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repoDir, "treehouse.toml"), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGetUsesConfiguredBaseBranch(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	addE2EBranch(t, repoDir, "develop", "develop-only.txt")
+	writeRepoConfig(t, repoDir, "base_branch = \"develop\"\n")
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease")
+	if code != 0 {
+		t.Fatalf("get --lease failed (code %d): %s", code, stderr)
+	}
+	wtPath := strings.TrimSpace(stdout)
+	if _, err := os.Stat(filepath.Join(wtPath, "develop-only.txt")); err != nil {
+		t.Errorf("expected the worktree to be cut from develop: %v", err)
+	}
+}
+
+func TestGetBaseFlagOverridesConfiguredBaseBranch(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	addE2EBranch(t, repoDir, "develop", "develop-only.txt")
+	addE2EBranch(t, repoDir, "release", "release-only.txt")
+	writeRepoConfig(t, repoDir, "base_branch = \"develop\"\n")
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease", "--base", "release")
+	if code != 0 {
+		t.Fatalf("get --lease --base release failed (code %d): %s", code, stderr)
+	}
+	wtPath := strings.TrimSpace(stdout)
+	if _, err := os.Stat(filepath.Join(wtPath, "release-only.txt")); err != nil {
+		t.Errorf("expected --base to win over base_branch: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wtPath, "develop-only.txt")); !os.IsNotExist(err) {
+		t.Error("expected the worktree to be cut from release, not develop")
+	}
+}
+
+// An unresolvable base must stop the acquisition and say which branch it could
+// not find, rather than quietly handing back a worktree cut from the default.
+func TestGetUnknownBaseFailsClosed(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease", "--base", "no-such-branch")
+	if code == 0 {
+		t.Fatalf("get with an unknown base succeeded: stdout=%q stderr=%q", stdout, stderr)
+	}
+	if !strings.Contains(stderr, "no-such-branch") {
+		t.Errorf("expected the error to name the branch, got %q", stderr)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("expected no path on stdout for a failed acquire, got %q", stdout)
+	}
+
+	statusOut, _, _ := runTreehouse(t, repoDir, homeDir, nil, "status")
+	if strings.Contains(statusOut, "available") || strings.Contains(statusOut, "leased") {
+		t.Errorf("expected no worktree to be created, got status:\n%s", statusOut)
+	}
+}
+
+func TestGetUnknownConfiguredBaseBranchFailsClosed(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	writeRepoConfig(t, repoDir, "base_branch = \"no-such-branch\"\n")
+
+	_, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease")
+	if code == 0 {
+		t.Fatal("get with an unresolvable base_branch succeeded")
+	}
+	if !strings.Contains(stderr, "no-such-branch") {
+		t.Errorf("expected the error to name the branch, got %q", stderr)
+	}
+}
+
+func TestGetLeaseJSONReportsBaseBranch(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	addE2EBranch(t, repoDir, "develop", "develop-only.txt")
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease", "--json", "--base", "develop")
+	if code != 0 {
+		t.Fatalf("get --lease --json --base develop failed (code %d): %s", code, stderr)
+	}
+	var lease leaseJSONResult
+	if err := json.Unmarshal([]byte(stdout), &lease); err != nil {
+		t.Fatalf("invalid JSON %q: %v", stdout, err)
+	}
+	if lease.BaseBranch != "develop" {
+		t.Errorf("base_branch = %q, want develop", lease.BaseBranch)
+	}
+}
+
+// Callers must be able to read which base they got even when they asked for
+// nothing, so the inferred default is reported too rather than left empty.
+func TestGetLeaseJSONReportsInferredBaseBranch(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease", "--json")
+	if code != 0 {
+		t.Fatalf("get --lease --json failed (code %d): %s", code, stderr)
+	}
+	var lease leaseJSONResult
+	if err := json.Unmarshal([]byte(stdout), &lease); err != nil {
+		t.Fatalf("invalid JSON %q: %v", stdout, err)
+	}
+	if lease.BaseBranch != "main" {
+		t.Errorf("base_branch = %q, want main", lease.BaseBranch)
+	}
+}
+
+// --base must not disturb the stdout contract: a bare path, nothing else.
+func TestGetBaseKeepsPathOnlyStdout(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	addE2EBranch(t, repoDir, "develop", "develop-only.txt")
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease", "--base", "develop")
+	if code != 0 {
+		t.Fatalf("get --lease --base develop failed (code %d): %s", code, stderr)
+	}
+	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+	if len(lines) != 1 || !filepath.IsAbs(lines[0]) {
+		t.Fatalf("expected exactly one absolute path on stdout, got %q", stdout)
+	}
+}
+
+// The interactive path honors the base too, and the slot it returns to the pool
+// is parked on the configured base so the next get can recycle it.
+func TestGetInteractiveUsesBaseBranchAndParksSlotThere(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	addE2EBranch(t, repoDir, "develop", "develop-only.txt")
+	writeRepoConfig(t, repoDir, "base_branch = \"develop\"\n")
+
+	// main advances past develop, so a slot parked on main could never be
+	// recycled onto develop.
+	if err := os.WriteFile(filepath.Join(repoDir, "hotfix.txt"), []byte("hotfix\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, repoDir, "add", "hotfix.txt")
+	gitCmd(t, repoDir, "commit", "-m", "hotfix on main")
+	gitCmd(t, repoDir, "push", "origin", "main")
+	developTip := gitCmd(t, repoDir, "rev-parse", "develop")
+
+	env := []string{"SHELL=" + exitShellBin}
+	_, stderr, code := runTreehouse(t, repoDir, homeDir, env, "get")
+	if code != 0 {
+		t.Fatalf("get failed (code %d): %s", code, stderr)
+	}
+	wtPath := extractWorktreePath(stderr, homeDir)
+	if wtPath == "" {
+		t.Fatal("could not extract worktree path from stderr")
+	}
+	if got := gitCmd(t, wtPath, "rev-parse", "HEAD"); got != developTip {
+		t.Errorf("returned slot HEAD = %s, want develop tip %s", got, developTip)
+	}
+}
