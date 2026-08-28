@@ -46,6 +46,12 @@ type LeaseInfo struct {
 	LeaseID     string    `json:"lease_id"`
 	LeaseHolder string    `json:"lease_holder"`
 	LeasedAt    time.Time `json:"leased_at"`
+	// BaseBranch is the branch this acquisition was cut from, whether it was
+	// requested explicitly or inferred. It is always populated so a caller
+	// learns which base it got rather than an empty field it must interpret.
+	// It is not persisted: it describes one acquisition, and the branch a slot
+	// will be reset to next is resolved again at that time.
+	BaseBranch string `json:"base_branch"`
 }
 
 // AcquireOptions controls optional acquisition behavior.
@@ -53,12 +59,18 @@ type AcquireOptions struct {
 	// SkipFetch uses the repository's existing local refs instead of fetching
 	// origin before acquiring a worktree.
 	SkipFetch bool
+	// BaseBranch overrides the branch worktrees are cut from. Empty keeps the
+	// branch inferred from the repository. A non-empty value that cannot be
+	// resolved fails the acquisition rather than falling back.
+	BaseBranch string
 }
 
 // acquireOptions controls how Acquire reserves the worktree it hands out.
 type acquireOptions struct {
 	// skipFetch uses existing local refs without contacting origin.
 	skipFetch bool
+	// baseBranch is the explicitly requested base branch, or empty to infer it.
+	baseBranch string
 	// lease records a durable, process-independent reservation instead of the
 	// default short-lived owner reservation.
 	lease bool
@@ -81,6 +93,7 @@ func Acquire(repoRoot, poolDir string, poolSize int, postCreate []string) (strin
 func AcquireWithOptions(repoRoot, poolDir string, poolSize int, postCreate []string, options AcquireOptions) (string, error) {
 	acquired, err := acquire(repoRoot, poolDir, poolSize, postCreate, acquireOptions{
 		skipFetch:  options.SkipFetch,
+		baseBranch: options.BaseBranch,
 		hookStdout: os.Stdout,
 		hookStderr: os.Stderr,
 	})
@@ -107,6 +120,7 @@ func AcquireLeaseInfo(repoRoot, poolDir string, poolSize int, postCreate []strin
 func AcquireLeaseInfoWithOptions(repoRoot, poolDir string, poolSize int, postCreate []string, holder string, options AcquireOptions) (LeaseInfo, error) {
 	return acquire(repoRoot, poolDir, poolSize, postCreate, acquireOptions{
 		skipFetch:   options.SkipFetch,
+		baseBranch:  options.BaseBranch,
 		lease:       true,
 		leaseHolder: holder,
 		hookStdout:  os.Stderr,
@@ -115,16 +129,19 @@ func AcquireLeaseInfoWithOptions(repoRoot, poolDir string, poolSize int, postCre
 }
 
 func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts acquireOptions) (LeaseInfo, error) {
-	branch, err := vcs.GetDefaultBranch(repoRoot)
-	if err != nil {
-		return LeaseInfo{}, err
-	}
-
 	fmt.Fprintf(os.Stderr, "🌳 Setting up worktree...\n")
 	if !opts.skipFetch && vcs.HasRemote(repoRoot, "origin") {
 		if err := vcs.Fetch(repoRoot); err != nil {
 			return LeaseInfo{}, fmt.Errorf("fetch failed: %w", err)
 		}
+	}
+
+	// Resolved after the fetch, not before: a base branch that exists only on
+	// origin is the common case, and verifying it against pre-fetch refs would
+	// reject a branch the very next line was about to make available.
+	branch, err := resolveBaseBranch(repoRoot, opts.baseBranch)
+	if err != nil {
+		return LeaseInfo{}, err
 	}
 
 	var acquired LeaseInfo
@@ -194,7 +211,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			if err := markAcquired(&state.Worktrees[i], opts); err != nil {
 				return err
 			}
-			acquired = leaseInfoFromEntry(state.Worktrees[i])
+			acquired = leaseInfoFromEntry(state.Worktrees[i], branch)
 			if err := WriteState(poolDir, state); err != nil {
 				return err
 			}
@@ -246,7 +263,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 		}
 		state.Worktrees = append(state.Worktrees, entry)
 
-		acquired = leaseInfoFromEntry(entry)
+		acquired = leaseInfoFromEntry(entry, branch)
 		if err := WriteState(poolDir, state); err != nil {
 			return err
 		}
@@ -263,13 +280,33 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 	return acquired, nil
 }
 
-func leaseInfoFromEntry(wt WorktreeEntry) LeaseInfo {
+func leaseInfoFromEntry(wt WorktreeEntry, baseBranch string) LeaseInfo {
 	return LeaseInfo{
 		Path:        wt.Path,
 		LeaseID:     wt.LeaseID,
 		LeaseHolder: wt.LeaseHolder,
 		LeasedAt:    wt.LeasedAt,
+		BaseBranch:  baseBranch,
 	}
+}
+
+// resolveBaseBranch picks the branch worktrees are cut from and reset to, in
+// this precedence: the explicitly requested branch (the --base flag, then
+// base_branch in config), otherwise the branch inferred from the repository.
+//
+// An explicit request is verified; the inferred default is not, because its
+// own lookup already fails when it cannot answer. The distinction matters at
+// the call site: the same string flows into AddWorktree for a new slot and
+// into IsWorktreeSafeToReset for a recycled one, and only the latter treats an
+// unresolvable branch as "skip this slot" rather than as an error.
+func resolveBaseBranch(repoRoot, requested string) (string, error) {
+	if requested == "" {
+		return vcs.GetDefaultBranch(repoRoot)
+	}
+	if err := vcs.VerifyBaseBranch(repoRoot, requested); err != nil {
+		return "", err
+	}
+	return requested, nil
 }
 
 // markAcquired stamps an acquired worktree entry: a durable lease in lease mode,
