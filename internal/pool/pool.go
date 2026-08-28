@@ -208,7 +208,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			if err := vcs.ResetWorktreeToRef(wt.Path, resetRef, head, true); err != nil {
 				continue
 			}
-			state.Worktrees[i].BaseBranch = branch
+			state.Worktrees[i].BaseBranch = opts.baseBranch
 			if err := markAcquired(&state.Worktrees[i], opts); err != nil {
 				return err
 			}
@@ -258,7 +258,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			Name:       name,
 			Path:       wtPath,
 			CreatedAt:  time.Now(),
-			BaseBranch: branch,
+			BaseBranch: opts.baseBranch,
 		}
 		if err := markAcquired(&entry, opts); err != nil {
 			return err
@@ -427,9 +427,9 @@ func ReleaseConditional(poolDir, worktreePath, baseBranch string, preconditions 
 		if err != nil {
 			return err
 		}
-		branch, fallback := "", ""
+		branch, fallback, requested := "", "", ""
 		if !markerless {
-			requested := baseBranch
+			requested = baseBranch
 			if requested == "" {
 				requested = wt.BaseBranch
 			}
@@ -459,8 +459,9 @@ func ReleaseConditional(poolDir, worktreePath, baseBranch string, preconditions 
 					return err
 				}
 				branch = fallback
+				requested = ""
 			}
-			wt.BaseBranch = branch
+			wt.BaseBranch = requested
 		}
 
 		wt.OwnerPID = 0

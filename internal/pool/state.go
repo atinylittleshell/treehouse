@@ -31,11 +31,12 @@ type WorktreeEntry struct {
 	LeaseHolder string `json:"lease_holder,omitempty"`
 	// LeasedAt records when the lease was taken.
 	LeasedAt time.Time `json:"leased_at,omitempty,omitzero"`
-	// BaseBranch is the branch this slot was last cut from. Release parks the
-	// slot back on it so the next acquire naming the same base can recycle it;
-	// without it a slot acquired with --base is parked on the repository
-	// default and never reused. Empty in state written before this field, which
-	// degrades to the previous behavior.
+	// BaseBranch is the EXPLICITLY requested base this slot was last cut from,
+	// empty for an inferred acquisition. Release parks the slot back on it so
+	// the next acquire naming the same base can recycle it. Only an explicit
+	// base is recorded: prune and destroy give a slot a second reading against
+	// this field, and recording an inferred default here would widen what they
+	// delete for pools that never opted in.
 	BaseBranch string `json:"base_branch,omitempty"`
 }
 

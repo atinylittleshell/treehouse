@@ -352,10 +352,6 @@ func headLandedOnItsBase(worktreePath, baseBranch string) bool {
 	if baseBranch == "" {
 		return false
 	}
-	defaultBranch, err := vcs.DefaultBranchForWorktree(worktreePath)
-	if err != nil || defaultBranch == baseBranch {
-		return false
-	}
 	ref := vcs.BaseBranchMergeRef(worktreePath, baseBranch)
 	if ref == "" {
 		return false

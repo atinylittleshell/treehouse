@@ -625,3 +625,114 @@ func TestDestroyPool_SkipsSlotMergedOnlyIntoALocalAheadDefault(t *testing.T) {
 		t.Fatalf("expected an unmerged skip needing --include-unlanded, got %#v", result.Skipped)
 	}
 }
+
+// A pool that never opted into base_branch must keep the deletion semantics it
+// had before this feature: merged into the origin-validated default ref, and
+// nothing else. Recording an inferred base on every slot would give prune and
+// destroy a second reading against a local-ahead branch and widen what they
+// delete for users who never touched the option.
+func TestPruneSkipsNonOptInSlotMergedOnlyIntoLocalDefault(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+
+	// Unpushed commits on local main: refs/heads/main is ahead of
+	// refs/remotes/origin/main, and acquire cuts from the ahead ref.
+	if err := os.WriteFile(filepath.Join(repoDir, "unpushed.txt"), []byte("unpushed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "unpushed.txt")
+	runGit(t, repoDir, "commit", "-m", "unpushed on local main")
+
+	wtPath, err := Acquire(repoDir, poolDir, 2, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	if err := Release(poolDir, wtPath); err != nil {
+		t.Fatalf("Release failed: %v", err)
+	}
+	// The main repo moves off the default, which is what made the old
+	// recorded-base-vs-default comparison answer differently.
+	runGit(t, repoDir, "checkout", "-b", "feature/x")
+
+	result, err := Prune(repoDir, poolDir, false, nil)
+	if err != nil {
+		t.Fatalf("Prune failed: %v", err)
+	}
+	if len(result.Pruned) != 0 {
+		t.Fatalf("a non-opt-in slot merged only into local main must not be pruned, got %#v", result.Pruned)
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Fatalf("expected the worktree to remain: %v", err)
+	}
+}
+
+// Same guarantee with no branch switch at all: a plain get taken while the main
+// repo sits on a feature branch must not become prunable once the default is
+// checked back out. No --base and no base_branch anywhere in this sequence.
+func TestPruneSkipsNonOptInSlotAcquiredOffTheDefaultBranch(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+
+	// Without origin/HEAD the default-branch inference falls through to the
+	// branch the main repo has checked out, so the slot is cut from feature/x.
+	runGit(t, repoDir, "remote", "set-head", "origin", "--delete")
+	runGit(t, repoDir, "checkout", "-b", "feature/x")
+	if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "feature.txt")
+	runGit(t, repoDir, "commit", "-m", "on feature/x")
+
+	// --no-fetch, because a fetch restores the origin/HEAD just deleted.
+	wtPath, err := AcquireWithOptions(repoDir, poolDir, 2, nil, AcquireOptions{SkipFetch: true})
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	if head, tip := gitOut(t, wtPath, "rev-parse", "HEAD"), gitOut(t, repoDir, "rev-parse", "feature/x"); head != tip {
+		t.Fatalf("fixture did not cut the slot from feature/x: slot=%s feature/x=%s", head, tip)
+	}
+	if err := Release(poolDir, wtPath); err != nil {
+		t.Fatalf("Release failed: %v", err)
+	}
+	runGit(t, repoDir, "checkout", "main")
+
+	result, err := Prune(repoDir, poolDir, false, nil)
+	if err != nil {
+		t.Fatalf("Prune failed: %v", err)
+	}
+	if len(result.Pruned) != 0 {
+		t.Fatalf("a slot inferred off a feature branch must not be pruned, got %#v", result.Pruned)
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Fatalf("expected the worktree to remain: %v", err)
+	}
+}
+
+// The same slot must also survive a bulk destroy without --include-unlanded.
+func TestDestroyPoolSkipsNonOptInSlotMergedOnlyIntoLocalDefault(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "unpushed.txt"), []byte("unpushed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "unpushed.txt")
+	runGit(t, repoDir, "commit", "-m", "unpushed on local main")
+
+	wtPath, err := Acquire(repoDir, poolDir, 2, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	if err := Release(poolDir, wtPath); err != nil {
+		t.Fatalf("Release failed: %v", err)
+	}
+	runGit(t, repoDir, "checkout", "-b", "feature/x")
+
+	result, err := DestroyPool(poolDir, DestroyOptions{})
+	if err != nil {
+		t.Fatalf("DestroyPool failed: %v", err)
+	}
+	if len(result.Destroyed) != 0 {
+		t.Fatalf("a non-opt-in slot merged only into local main must not be destroyed, got %#v", result.Destroyed)
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Fatalf("expected the worktree to remain: %v", err)
+	}
+}
