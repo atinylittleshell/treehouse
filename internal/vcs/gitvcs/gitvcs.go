@@ -130,6 +130,10 @@ func refExists(repoRoot, ref string) bool {
 // branchRef returns whichever of the local branch or remote-tracking branch is
 // further ahead. If they have diverged (neither is an ancestor of the other),
 // it prefers origin. Falls back to whichever ref exists.
+//
+// Both are returned fully qualified. A bare branch name would let git's
+// disambiguation pick refs/tags/<name>, which it ranks above refs/heads/<name>,
+// and silently cut the worktree from a same-named tag.
 func branchRef(repoRoot, branch string) string {
 	local := "refs/heads/" + branch
 	remote := remoteTrackingRef("origin", branch)
@@ -145,11 +149,11 @@ func branchRef(repoRoot, branch string) string {
 		// Otherwise local is ahead or they diverged; prefer local when
 		// it's strictly ahead, prefer remote on divergence.
 		if isAncestor(repoRoot, remote, local) {
-			return branch
+			return local
 		}
 		return remote
 	case hasLocal:
-		return branch
+		return local
 	default:
 		return remote
 	}

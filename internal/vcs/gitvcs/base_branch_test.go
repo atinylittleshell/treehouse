@@ -85,3 +85,41 @@ func gitOutput(t *testing.T, dir string, args ...string) string {
 	}
 	return out
 }
+
+// git rev-parse ranks refs/tags/<name> above refs/heads/<name>, so a bare name
+// would resolve a base branch to a same-named tag.
+func TestBranchRefPrefersBranchOverSameNamedTag(t *testing.T) {
+	repoDir := setupBaseBranchRepo(t)
+	mustGit(t, repoDir, "branch", "release-1.0")
+	branchTip := gitOutput(t, repoDir, "rev-parse", "refs/heads/release-1.0")
+	mustGit(t, repoDir, "commit", "--allow-empty", "-m", "after the branch")
+	mustGit(t, repoDir, "tag", "release-1.0")
+	tagTip := gitOutput(t, repoDir, "rev-parse", "refs/tags/release-1.0")
+	if branchTip == tagTip {
+		t.Fatal("fixture needs the tag and the branch at different commits")
+	}
+
+	got, err := refCommit(repoDir, branchRef(repoDir, "release-1.0"))
+	if err != nil {
+		t.Fatalf("resolving the base failed: %v", err)
+	}
+	if got != branchTip {
+		t.Errorf("base resolved to %s, want branch %s (tag is %s)", got, branchTip, tagTip)
+	}
+}
+
+func TestAddWorktreeCutsFromBranchNotSameNamedTag(t *testing.T) {
+	repoDir := setupBaseBranchRepo(t)
+	mustGit(t, repoDir, "branch", "release-1.0")
+	branchTip := gitOutput(t, repoDir, "rev-parse", "refs/heads/release-1.0")
+	mustGit(t, repoDir, "commit", "--allow-empty", "-m", "after the branch")
+	mustGit(t, repoDir, "tag", "release-1.0")
+
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	if err := AddWorktree(repoDir, wtPath, "release-1.0"); err != nil {
+		t.Fatalf("AddWorktree failed: %v", err)
+	}
+	if got := gitOutput(t, wtPath, "rev-parse", "HEAD"); got != branchTip {
+		t.Errorf("worktree HEAD = %s, want branch tip %s", got, branchTip)
+	}
+}
