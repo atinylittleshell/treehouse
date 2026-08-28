@@ -155,20 +155,11 @@ func branchRef(repoRoot, branch string) string {
 	}
 }
 
-// BranchExists reports whether branch names a branch this repository can cut a
-// worktree from: a local refs/heads/<branch>, or the origin-tracking
-// refs/remotes/origin/<branch>. Those are exactly the two refs branchRef
-// chooses between, so a branch that passes here is one both AddWorktree and
-// IsWorktreeSafeToReset can act on.
-//
-// The fully qualified prefixes are the point. A bare `git rev-parse --verify
-// <name>` also resolves tags, commit IDs, and HEAD, and a base pinned to a ref
-// that never advances is not what the recycle guard asks about when it checks
-// whether a slot's HEAD is merged into its base.
-//
-// A repository git cannot read reports every branch as missing, which fails
-// closed: the caller refuses to acquire rather than falling back to a base it
-// could not verify.
+// BranchExists reports whether branch resolves to refs/heads/<branch> or
+// refs/remotes/origin/<branch>, the two refs branchRef chooses between. The
+// fully qualified prefixes exclude tags, commit IDs, and HEAD, which a bare
+// rev-parse --verify would accept. An unreadable repository reports every
+// branch as missing, which fails closed.
 func BranchExists(repoRoot, branch string) bool {
 	if branch == "" {
 		return false

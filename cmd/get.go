@@ -58,9 +58,7 @@ func init() {
 	getCmd.Flags().StringVar(&getLeaseHolder, "lease-holder", "", "Optional label recorded as the lease holder (defaults to $TREEHOUSE_LEASE_HOLDER)")
 	getCmd.Flags().BoolVar(&getJSON, "json", false, "Print lease allocation as JSON (requires --lease)")
 	getCmd.Flags().BoolVar(&getNoFetch, "no-fetch", false, "Skip fetching origin before acquiring; use existing local refs")
-	// No -b shorthand: git spells branch CREATION -b, and this flag selects a
-	// base to cut from without creating anything. Leaving -b unclaimed keeps it
-	// available for an acquire-and-name flag that means what git means.
+	// No -b shorthand: git spells branch creation -b, and this creates nothing.
 	getCmd.Flags().StringVar(&getBase, "base", "", "Branch to cut this worktree from, overriding base_branch in config (default: inferred from the repository)")
 	rootCmd.AddCommand(getCmd)
 }
@@ -153,10 +151,8 @@ func returnWorktreeToPool(poolDir, wtPath, baseBranch string) error {
 	})
 }
 
-// resolveRequestedBase returns the base branch this invocation asks for: the
-// --base flag, then base_branch from config, then empty for the branch inferred
-// from the repository. Both explicit sources take the same verified path, so a
-// flag and a config value cannot disagree about what resolves.
+// resolveRequestedBase returns the base this invocation asks for: the --base
+// flag, then base_branch from config, then empty to infer it.
 func resolveRequestedBase(cfg config.Config) string {
 	if getBase != "" {
 		return getBase
@@ -164,19 +160,11 @@ func resolveRequestedBase(cfg config.Config) string {
 	return cfg.BaseBranch
 }
 
-// releaseBaseBranch returns the branch a returned worktree should be parked on:
-// the pool's configured base_branch, or "" for the repository's inferred
-// default.
-//
-// It reads the configured base rather than whatever --base this invocation
-// used, because parking is about what the NEXT acquire can recycle. A slot
-// parked on a one-off base would be unreusable by an ordinary get for the same
-// reason a slot parked on the default is unreusable under a configured base.
-//
-// A base that does not resolve degrades to the default with a warning instead
-// of failing. Returning is the operation that must always be possible: a
-// base_branch typo would otherwise make every reset fail and strand the
-// reservation, and 'treehouse get' already reports that typo as a real error.
+// releaseBaseBranch returns the branch a returned worktree is parked on: the
+// configured base, or "" for the repository default. It reads config rather
+// than this invocation's --base because parking decides what the NEXT acquire
+// can recycle. An unresolvable base warns and falls back, so a typo cannot
+// strand the reservation; get reports it as a real error.
 func releaseBaseBranch(repoRoot string, cfg config.Config) string {
 	if cfg.BaseBranch == "" {
 		return ""

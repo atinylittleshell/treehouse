@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// addBranch creates branch at the current HEAD of repoDir plus one commit that
-// carries marker, then returns to main. The marker file makes it verifiable
-// which branch a worktree was actually cut from.
+// addBranch creates branch at HEAD plus one commit carrying marker, then
+// returns to main, so tests can tell which branch a worktree was cut from.
 func addBranch(t *testing.T, repoDir, branch, marker string) string {
 	t.Helper()
 	runGit(t, repoDir, "checkout", "-b", branch)
@@ -40,9 +39,6 @@ func TestAcquire_UsesConfiguredBaseBranch(t *testing.T) {
 	}
 }
 
-// The default branch stays the default. A repository that has a develop branch
-// but no configured base must behave exactly as it did before this option
-// existed.
 func TestAcquire_WithoutBaseBranchKeepsDefaultBranch(t *testing.T) {
 	repoDir, poolDir := setupRepo(t)
 	addBranch(t, repoDir, "develop", "develop-only.txt")
@@ -61,9 +57,6 @@ func TestAcquire_WithoutBaseBranchKeepsDefaultBranch(t *testing.T) {
 	}
 }
 
-// A base that cannot be resolved must stop the acquisition, not fall back to
-// the inferred default. Falling back would hand out a worktree cut from the
-// wrong branch and report success.
 func TestAcquire_UnknownBaseBranchFailsClosedWithoutCreatingAWorktree(t *testing.T) {
 	repoDir, poolDir := setupRepo(t)
 
@@ -84,9 +77,6 @@ func TestAcquire_UnknownBaseBranchFailsClosedWithoutCreatingAWorktree(t *testing
 	}
 }
 
-// Pools predate the option: their slots were cut from the old default. Once a
-// base branch is configured, the next acquire has to be able to recycle those
-// slots onto it, or every existing pool would need a manual destroy.
 func TestAcquire_RecyclesExistingSlotOntoNewBaseBranch(t *testing.T) {
 	repoDir, poolDir := setupRepo(t)
 
@@ -96,8 +86,6 @@ func TestAcquire_RecyclesExistingSlotOntoNewBaseBranch(t *testing.T) {
 	}
 	clearOwnerReservation(t, poolDir, wtPath)
 
-	// develop is ahead of main, so the slot's HEAD is merged into it and the
-	// slot holds nothing that would be lost.
 	developTip := addBranch(t, repoDir, "develop", "develop-only.txt")
 
 	reused, err := AcquireWithOptions(repoDir, poolDir, 1, nil, AcquireOptions{BaseBranch: "develop"})
@@ -112,9 +100,6 @@ func TestAcquire_RecyclesExistingSlotOntoNewBaseBranch(t *testing.T) {
 	}
 }
 
-// Changing the base must not turn the unlanded-work guard off. A slot holding
-// commits that are not in the new base is not disposable just because the base
-// changed.
 func TestAcquire_SkipsSlotHoldingWorkNotMergedIntoNewBaseBranch(t *testing.T) {
 	repoDir, poolDir := setupRepo(t)
 
@@ -144,8 +129,6 @@ func TestAcquire_SkipsSlotHoldingWorkNotMergedIntoNewBaseBranch(t *testing.T) {
 	}
 }
 
-// A branch that exists only on origin is the common case for base_branch: the
-// person configuring it may never have checked that branch out locally.
 func TestAcquire_ResolvesBaseBranchThatExistsOnlyOnOrigin(t *testing.T) {
 	repoDir, poolDir := setupRepo(t)
 	developTip := addBranch(t, repoDir, "develop", "develop-only.txt")
@@ -174,9 +157,6 @@ func TestAcquireLeaseInfo_ReportsResolvedBaseBranch(t *testing.T) {
 	}
 }
 
-// With no base configured the reported base is the inferred default, so a
-// caller always learns which branch it actually got rather than an empty
-// field it has to interpret.
 func TestAcquireLeaseInfo_ReportsInferredDefaultBranch(t *testing.T) {
 	repoDir, poolDir := setupRepo(t)
 
@@ -189,17 +169,13 @@ func TestAcquireLeaseInfo_ReportsInferredDefaultBranch(t *testing.T) {
 	}
 }
 
-// A returned slot must be parked on the branch the pool cuts from, not on the
-// repository default. Acquire only recycles a slot whose HEAD is merged into
-// the base it is about to be reset to, so a slot parked on a default branch
-// that is not an ancestor of the base is unreusable forever: every acquire
-// creates another slot until max_trees is exhausted.
+// Acquire recycles a slot only when its HEAD is merged into the base it resets
+// to, so a slot parked off-base is unreusable forever.
 func TestRelease_ParksWorktreeOnConfiguredBaseBranch(t *testing.T) {
 	repoDir, poolDir := setupRepo(t)
 	developTip := addBranch(t, repoDir, "develop", "develop-only.txt")
 
-	// main advances past develop, exactly as a hotfix landed on main alone
-	// would leave it. main's tip is now not an ancestor of develop.
+	// main advances past develop, so main's tip is no longer an ancestor of it.
 	if err := os.WriteFile(filepath.Join(repoDir, "hotfix.txt"), []byte("hotfix\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -226,8 +202,6 @@ func TestRelease_ParksWorktreeOnConfiguredBaseBranch(t *testing.T) {
 	}
 }
 
-// An empty base keeps the repository default, so returning a worktree in a
-// pool with no configured base is untouched.
 func TestRelease_WithoutBaseBranchParksOnRepositoryDefault(t *testing.T) {
 	repoDir, poolDir := setupRepo(t)
 	addBranch(t, repoDir, "develop", "develop-only.txt")

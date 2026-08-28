@@ -69,8 +69,6 @@ var statusCmd = &cobra.Command{
 		cyan := color.New(color.FgCyan, color.Bold).SprintFunc()
 		magenta := color.New(color.FgMagenta).SprintFunc()
 
-		// Printed before the rows, and before the empty-pool message, because
-		// it describes what the pool will hand out rather than what is in it.
 		fmt.Fprintln(os.Stdout, baseBranchLine(repoRoot, cfg, yellow))
 
 		if len(worktrees) == 0 {
@@ -129,16 +127,9 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 }
 
-// baseBranchLine reports the branch new and recycled worktrees are cut from,
-// so the answer to "what will my next get be based on" does not require
-// reading git internals or treehouse's source.
-//
-// It never fails the command. status is a read-only report, and a base that
-// cannot be resolved is precisely what the reader needs to be told: every get
-// will fail until it is fixed. The line is human output only -- status --json
-// is a top-level array that machine callers already parse, and reporting a
-// pool-level fact there would mean wrapping it in an object and breaking every
-// existing consumer.
+// baseBranchLine reports the branch worktrees are cut from. It never fails the
+// command: an unresolvable base is a finding to report, not a status error.
+// Human output only; status --json is a top-level array and stays one.
 func baseBranchLine(repoRoot string, cfg config.Config, warn func(a ...interface{}) string) string {
 	const prefix = "base  "
 	if cfg.BaseBranch == "" {
@@ -149,9 +140,7 @@ func baseBranchLine(repoRoot string, cfg config.Config, warn func(a ...interface
 		return prefix + branch + "  (repository default)"
 	}
 	if err := vcs.VerifyBaseBranch(repoRoot, cfg.BaseBranch); err != nil {
-		// Deliberately short: this sits above a table, and the reader needs to
-		// know the base is broken, not why in full. 'treehouse get' prints the
-		// complete diagnosis when they act on it.
+		// Short: this sits above a table, and get prints the full diagnosis.
 		return prefix + cfg.BaseBranch + warn("  (configured, but cannot be resolved — 'treehouse get' will fail)")
 	}
 	return prefix + cfg.BaseBranch + "  (configured)"

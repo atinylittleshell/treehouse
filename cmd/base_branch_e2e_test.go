@@ -9,8 +9,7 @@ import (
 )
 
 // addE2EBranch creates branch at HEAD plus one commit carrying marker, pushes
-// it, and returns to main. The marker file makes it verifiable from the
-// worktree contents which branch a slot was cut from.
+// it, and returns to main.
 func addE2EBranch(t *testing.T, repoDir, branch, marker string) {
 	t.Helper()
 	gitCmd(t, repoDir, "checkout", "-b", branch)
@@ -64,8 +63,6 @@ func TestGetBaseFlagOverridesConfiguredBaseBranch(t *testing.T) {
 	}
 }
 
-// An unresolvable base must stop the acquisition and say which branch it could
-// not find, rather than quietly handing back a worktree cut from the default.
 func TestGetUnknownBaseFailsClosed(t *testing.T) {
 	repoDir, homeDir := setupTestRepo(t)
 
@@ -116,8 +113,6 @@ func TestGetLeaseJSONReportsBaseBranch(t *testing.T) {
 	}
 }
 
-// Callers must be able to read which base they got even when they asked for
-// nothing, so the inferred default is reported too rather than left empty.
 func TestGetLeaseJSONReportsInferredBaseBranch(t *testing.T) {
 	repoDir, homeDir := setupTestRepo(t)
 
@@ -134,7 +129,6 @@ func TestGetLeaseJSONReportsInferredBaseBranch(t *testing.T) {
 	}
 }
 
-// --base must not disturb the stdout contract: a bare path, nothing else.
 func TestGetBaseKeepsPathOnlyStdout(t *testing.T) {
 	repoDir, homeDir := setupTestRepo(t)
 	addE2EBranch(t, repoDir, "develop", "develop-only.txt")
@@ -149,15 +143,11 @@ func TestGetBaseKeepsPathOnlyStdout(t *testing.T) {
 	}
 }
 
-// The interactive path honors the base too, and the slot it returns to the pool
-// is parked on the configured base so the next get can recycle it.
 func TestGetInteractiveUsesBaseBranchAndParksSlotThere(t *testing.T) {
 	repoDir, homeDir := setupTestRepo(t)
 	addE2EBranch(t, repoDir, "develop", "develop-only.txt")
 	writeRepoConfig(t, repoDir, "base_branch = \"develop\"\n")
 
-	// main advances past develop, so a slot parked on main could never be
-	// recycled onto develop.
 	if err := os.WriteFile(filepath.Join(repoDir, "hotfix.txt"), []byte("hotfix\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -210,9 +200,6 @@ func TestStatusShowsInferredBaseBranch(t *testing.T) {
 	}
 }
 
-// A base_branch that does not resolve is exactly what a reader needs told:
-// every get will fail until it is fixed. status still exits 0, because it is a
-// read-only report.
 func TestStatusFlagsUnresolvableConfiguredBaseBranch(t *testing.T) {
 	repoDir, homeDir := setupTestRepo(t)
 	writeRepoConfig(t, repoDir, "base_branch = \"no-such-branch\"\n")
@@ -226,8 +213,7 @@ func TestStatusFlagsUnresolvableConfiguredBaseBranch(t *testing.T) {
 	}
 }
 
-// status --json is a top-level ARRAY that machine callers already parse.
-// Reporting the base must not turn it into an object.
+// status --json is a top-level array machine callers already parse.
 func TestStatusJSONRemainsATopLevelArray(t *testing.T) {
 	repoDir, homeDir := setupTestRepo(t)
 	addE2EBranch(t, repoDir, "develop", "develop-only.txt")
@@ -248,7 +234,6 @@ func TestStatusJSONRemainsATopLevelArray(t *testing.T) {
 	if len(statuses) != 1 {
 		t.Fatalf("expected 1 worktree, got %d: %s", len(statuses), stdout)
 	}
-	// The human base line must not leak into machine output.
 	if strings.Contains(stdout, "base") && !strings.Contains(stdout, "\"base") {
 		t.Errorf("unexpected human base line in JSON output:\n%s", stdout)
 	}

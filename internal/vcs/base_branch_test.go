@@ -45,8 +45,6 @@ func TestVerifyBaseBranchRejectsMissingBranch(t *testing.T) {
 	if err == nil {
 		t.Fatal("VerifyBaseBranch on a missing branch = nil, want an error")
 	}
-	// The message has to name the branch and say where treehouse looked, so a
-	// typo is fixable without reading treehouse's source.
 	for _, want := range []string{"develop", "origin/develop"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
@@ -54,10 +52,8 @@ func TestVerifyBaseBranchRejectsMissingBranch(t *testing.T) {
 	}
 }
 
-// An explicit base branch is git-only for now. Under the jj backend it must
-// fail closed and say so, never silently fall back to the default bookmark:
-// a caller who asked for develop and silently got main would notice only
-// after the agent had already committed onto the wrong base.
+// git-only for now: under jj this must fail closed rather than silently fall
+// back to the default bookmark.
 func TestVerifyBaseBranchRefusesUnderJJBackend(t *testing.T) {
 	isolateUserConfig(t)
 	dir := fakeJJOnlyRepo(t)

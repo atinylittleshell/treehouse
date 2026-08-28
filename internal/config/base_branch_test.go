@@ -14,8 +14,6 @@ func TestLoad_BaseBranchDefaultsToEmpty(t *testing.T) {
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	// Empty means "infer the default branch", which is what every existing
-	// repository without the key must keep doing.
 	if cfg.BaseBranch != "" {
 		t.Errorf("BaseBranch: got %q, want empty", cfg.BaseBranch)
 	}
@@ -63,8 +61,6 @@ func TestLoad_BaseBranchFromUserConfig(t *testing.T) {
 	}
 }
 
-// The repo-level file is the one a team commits, so it must win over a
-// user-level default exactly as max_trees and root already do.
 func TestLoad_RepoBaseBranchOverridesUserConfig(t *testing.T) {
 	repoDir := t.TempDir()
 	userHome := t.TempDir()

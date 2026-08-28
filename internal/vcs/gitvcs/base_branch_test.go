@@ -6,9 +6,8 @@ import (
 	"testing"
 )
 
-// setupBaseBranchRepo builds a repo with a bare origin holding a branch that
-// exists only on the remote, so the local/remote halves of BranchExists are
-// exercised independently.
+// setupBaseBranchRepo builds a repo whose origin holds a remote-only branch,
+// so both halves of BranchExists are exercised.
 func setupBaseBranchRepo(t *testing.T) string {
 	t.Helper()
 	base := t.TempDir()
@@ -49,8 +48,6 @@ func setupBaseBranchRepo(t *testing.T) string {
 func TestBranchExists(t *testing.T) {
 	repoDir := setupBaseBranchRepo(t)
 
-	// BranchExists must accept exactly what branchRef can resolve, otherwise
-	// verification and the reset that follows it could disagree.
 	for _, branch := range []string{"main", "local-only", "remote-only"} {
 		if !BranchExists(repoDir, branch) {
 			t.Errorf("BranchExists(%q) = false, want true", branch)
@@ -66,9 +63,8 @@ func TestBranchExistsReportsMissingBranch(t *testing.T) {
 	}
 }
 
-// A tag or a commit SHA resolves as a git ref but is not a branch. Accepting
-// one would let a worktree be pinned to a ref that never advances, which the
-// recycle guard's "HEAD merged into the base" question is not written for.
+// A tag or SHA resolves as a ref but is not a branch: the recycle guard's
+// "merged into the base" question assumes a base that advances.
 func TestBranchExistsRejectsNonBranchRefs(t *testing.T) {
 	repoDir := setupBaseBranchRepo(t)
 	mustGit(t, repoDir, "tag", "v1.0.0")

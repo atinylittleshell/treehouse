@@ -46,11 +46,9 @@ type LeaseInfo struct {
 	LeaseID     string    `json:"lease_id"`
 	LeaseHolder string    `json:"lease_holder"`
 	LeasedAt    time.Time `json:"leased_at"`
-	// BaseBranch is the branch this acquisition was cut from, whether it was
-	// requested explicitly or inferred. It is always populated so a caller
-	// learns which base it got rather than an empty field it must interpret.
-	// It is not persisted: it describes one acquisition, and the branch a slot
-	// will be reset to next is resolved again at that time.
+	// BaseBranch is the branch this acquisition was cut from, explicit or
+	// inferred. Always populated, never persisted: it describes one
+	// acquisition, and the next reset resolves the branch again.
 	BaseBranch string `json:"base_branch"`
 }
 
@@ -136,9 +134,8 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 		}
 	}
 
-	// Resolved after the fetch, not before: a base branch that exists only on
-	// origin is the common case, and verifying it against pre-fetch refs would
-	// reject a branch the very next line was about to make available.
+	// After the fetch, not before: a base that exists only on origin would be
+	// rejected against pre-fetch refs.
 	branch, err := resolveBaseBranch(repoRoot, opts.baseBranch)
 	if err != nil {
 		return LeaseInfo{}, err
@@ -290,15 +287,13 @@ func leaseInfoFromEntry(wt WorktreeEntry, baseBranch string) LeaseInfo {
 	}
 }
 
-// resolveBaseBranch picks the branch worktrees are cut from and reset to, in
-// this precedence: the explicitly requested branch (the --base flag, then
-// base_branch in config), otherwise the branch inferred from the repository.
+// resolveBaseBranch picks the branch worktrees are cut from and reset to: the
+// explicitly requested one, otherwise the inferred default.
 //
-// An explicit request is verified; the inferred default is not, because its
-// own lookup already fails when it cannot answer. The distinction matters at
-// the call site: the same string flows into AddWorktree for a new slot and
-// into IsWorktreeSafeToReset for a recycled one, and only the latter treats an
-// unresolvable branch as "skip this slot" rather than as an error.
+// Only an explicit request is verified. GetDefaultBranch already errors when it
+// cannot answer, but an unverified explicit branch would not surface at all:
+// acquire SKIPS a slot whose safety check fails, so a typo would look like a
+// pool with nothing reusable and burn a fresh slot per call.
 func resolveBaseBranch(repoRoot, requested string) (string, error) {
 	if requested == "" {
 		return vcs.GetDefaultBranch(repoRoot)
@@ -371,12 +366,11 @@ func ValidateReleasePreconditions(poolDir, worktreePath string, preconditions Re
 // slot is left for destroy; acquire refuses to reuse it.
 //
 // baseBranch parks the returned slot on the branch the pool cuts from; empty
-// keeps the repository's inferred default. Callers must pass a branch they have
-// already verified, because failing to reset here would leave the reservation
-// held. Parking matters for reuse, not just tidiness: acquire recycles a slot
-// only when its HEAD is merged into the base it is about to be reset to, so a
-// slot parked on a default branch that is not an ancestor of the base can never
-// be recycled, and every acquire creates another slot until max_trees runs out.
+// keeps the inferred default. Callers must pass an already-verified branch, or
+// a failed reset leaves the reservation held. Parking is what keeps the slot
+// reusable: acquire recycles only when HEAD is merged into the base it resets
+// to, so a slot parked off-base is never recycled and every acquire grows the
+// pool until max_trees.
 func ReleaseConditional(poolDir, worktreePath, baseBranch string, preconditions ReleasePreconditions, beforeReset func() error) error {
 	markerless := vcs.WorktreeBackendName(worktreePath) == ""
 	branch := ""
