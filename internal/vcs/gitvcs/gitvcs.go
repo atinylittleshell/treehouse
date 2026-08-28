@@ -161,15 +161,26 @@ func branchRef(repoRoot, branch string) string {
 
 // BranchExists reports whether branch resolves to refs/heads/<branch> or
 // refs/remotes/origin/<branch>, the two refs branchRef chooses between. The
-// fully qualified prefixes exclude tags, commit IDs, and HEAD, which a bare
-// rev-parse --verify would accept. An unreadable repository reports every
-// branch as missing, which fails closed.
+// fully qualified prefixes exclude tags and commit IDs, which a bare
+// rev-parse --verify would accept. HEAD is rejected by name: git clone writes
+// refs/remotes/origin/HEAD, so the prefixes alone would let it through. An
+// unreadable repository reports every branch as missing, which fails closed.
 func BranchExists(repoRoot, branch string) bool {
-	if branch == "" {
+	if branch == "" || branch == "HEAD" {
 		return false
 	}
 	return refExists(repoRoot, "refs/heads/"+branch) ||
 		refExists(repoRoot, remoteTrackingRef("origin", branch))
+}
+
+// BranchMergeRef returns the fully qualified ref merge-safety checks should
+// compare against for branch, or "" when branch names no local or
+// remote-tracking branch.
+func BranchMergeRef(repoRoot, branch string) string {
+	if !BranchExists(repoRoot, branch) {
+		return ""
+	}
+	return branchRef(repoRoot, branch)
 }
 
 func remoteTrackingRef(remote, branch string) string {

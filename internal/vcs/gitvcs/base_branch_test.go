@@ -123,3 +123,35 @@ func TestAddWorktreeCutsFromBranchNotSameNamedTag(t *testing.T) {
 		t.Errorf("worktree HEAD = %s, want branch tip %s", got, branchTip)
 	}
 }
+
+// git clone writes refs/remotes/origin/HEAD, so the fully qualified prefixes
+// alone accept "HEAD" as a base branch. The push-based fixture above never
+// creates that ref, which is why it cannot prove the rejection.
+func TestBranchExistsRejectsHeadInAClonedRepository(t *testing.T) {
+	origin := setupBaseBranchRepo(t)
+	clone := filepath.Join(t.TempDir(), "clone")
+	mustGit(t, "", "clone", origin, clone)
+
+	if _, err := runGit(clone, "rev-parse", "--verify", "refs/remotes/origin/HEAD"); err != nil {
+		t.Skipf("this git does not create refs/remotes/origin/HEAD on clone: %v", err)
+	}
+	if BranchExists(clone, "HEAD") {
+		t.Error("BranchExists(\"HEAD\") = true, want false: only branch names are accepted")
+	}
+}
+
+func TestBranchMergeRefResolvesToTheBranchRef(t *testing.T) {
+	repoDir := setupBaseBranchRepo(t)
+
+	if got := BranchMergeRef(repoDir, "local-only"); got != "refs/heads/local-only" {
+		t.Errorf("BranchMergeRef(\"local-only\") = %q, want refs/heads/local-only", got)
+	}
+	if got := BranchMergeRef(repoDir, "remote-only"); got != "refs/remotes/origin/remote-only" {
+		t.Errorf("BranchMergeRef(\"remote-only\") = %q, want refs/remotes/origin/remote-only", got)
+	}
+	for _, name := range []string{"", "no-such-branch", "HEAD"} {
+		if got := BranchMergeRef(repoDir, name); got != "" {
+			t.Errorf("BranchMergeRef(%q) = %q, want \"\"", name, got)
+		}
+	}
+}

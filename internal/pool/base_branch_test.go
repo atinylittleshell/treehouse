@@ -307,3 +307,166 @@ func TestRelease_FallsBackWhenBaseBranchDisappears(t *testing.T) {
 		t.Errorf("reservation not cleared: %+v", entry)
 	}
 }
+
+// A pool with no configured base_branch parks a --base slot on that base. A
+// later plain get must still recycle it: work reachable from the base the slot
+// was cut from is as disposable as work reachable from the requested one.
+// Without this the slot is unreusable forever and the pool grows to max_trees.
+func TestAcquire_RecyclesSlotParkedOnAnotherBase(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	addBranch(t, repoDir, "develop", "develop-only.txt")
+	mainTip := gitOut(t, repoDir, "rev-parse", "HEAD")
+
+	first, err := AcquireWithOptions(repoDir, poolDir, 2, nil, AcquireOptions{BaseBranch: "develop"})
+	if err != nil {
+		t.Fatalf("first acquire failed: %v", err)
+	}
+	if err := ReleaseConditional(poolDir, first, "", ReleasePreconditions{}, nil); err != nil {
+		t.Fatalf("release failed: %v", err)
+	}
+
+	second, err := Acquire(repoDir, poolDir, 2, nil)
+	if err != nil {
+		t.Fatalf("plain acquire failed: %v", err)
+	}
+	if second != first {
+		t.Fatalf("plain acquire built a new slot %s instead of recycling %s", second, first)
+	}
+	if got := gitOut(t, second, "rev-parse", "HEAD"); got != mainTip {
+		t.Errorf("recycled worktree HEAD = %s, want main tip %s", got, mainTip)
+	}
+	if _, err := os.Stat(filepath.Join(second, "develop-only.txt")); !os.IsNotExist(err) {
+		t.Error("expected the recycled slot to be reset onto main")
+	}
+}
+
+// The recorded-base fallback must not become an escape hatch for unlanded work:
+// a commit beyond the slot's own base is still unreachable from any base.
+func TestAcquire_SkipsSlotHoldingWorkBeyondItsRecordedBase(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	addBranch(t, repoDir, "develop", "develop-only.txt")
+
+	wtPath, err := AcquireWithOptions(repoDir, poolDir, 1, nil, AcquireOptions{BaseBranch: "develop"})
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wtPath, "unlanded.txt"), []byte("keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, wtPath, "add", "unlanded.txt")
+	runGit(t, wtPath, "commit", "-m", "committed but unlanded")
+	head := gitOut(t, wtPath, "rev-parse", "HEAD")
+	clearOwnerReservation(t, poolDir, wtPath)
+
+	if _, err := Acquire(repoDir, poolDir, 1, nil); err == nil {
+		t.Fatal("expected acquire to fail closed rather than discard work beyond the recorded base")
+	}
+	if got := gitOut(t, wtPath, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("expected unlanded HEAD %s preserved, got %s", head, got)
+	}
+	if _, err := os.Stat(filepath.Join(wtPath, "unlanded.txt")); err != nil {
+		t.Fatalf("expected unlanded commit preserved on disk: %v", err)
+	}
+}
+
+// Prune must judge a slot against the base it is parked on. Against the
+// repository default, every pristine develop-based slot reads as unmerged and
+// prune becomes a no-op that mislabels clean slots as holding unlanded work.
+func TestPrune_TreatsSlotParkedOnItsBaseAsDisposable(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	addBranch(t, repoDir, "develop", "develop-only.txt")
+
+	wtPath, err := AcquireWithOptions(repoDir, poolDir, 1, nil, AcquireOptions{BaseBranch: "develop"})
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	if err := ReleaseConditional(poolDir, wtPath, "develop", ReleasePreconditions{}, nil); err != nil {
+		t.Fatalf("release failed: %v", err)
+	}
+
+	result, err := Prune(repoDir, poolDir, true, nil)
+	if err != nil {
+		t.Fatalf("Prune failed: %v", err)
+	}
+	if len(result.Skipped) != 0 {
+		t.Fatalf("expected no skips for a slot parked on its own base, got %#v", result.Skipped)
+	}
+	if len(result.Candidates) != 1 || result.Candidates[0].Path != wtPath {
+		t.Fatalf("expected prune candidate %s, got %#v", wtPath, result.Candidates)
+	}
+}
+
+// Prune still refuses a slot carrying commits beyond its own base.
+func TestPrune_SkipsSlotHoldingWorkBeyondItsBase(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	addBranch(t, repoDir, "develop", "develop-only.txt")
+
+	wtPath, err := AcquireWithOptions(repoDir, poolDir, 1, nil, AcquireOptions{BaseBranch: "develop"})
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	runGit(t, wtPath, "commit", "--allow-empty", "-m", "beyond develop")
+	clearOwnerReservation(t, poolDir, wtPath)
+
+	result, err := Prune(repoDir, poolDir, true, nil)
+	if err != nil {
+		t.Fatalf("Prune failed: %v", err)
+	}
+	if len(result.Candidates) != 0 {
+		t.Fatalf("expected no prune candidate, got %#v", result.Candidates)
+	}
+	if !hasSkippedCategory(result.Skipped, wtPath, PruneSkipUnmerged) {
+		t.Fatalf("expected an unmerged skip, got %#v", result.Skipped)
+	}
+}
+
+// Destroy shares prune's classification, so it must agree on which base a slot
+// belongs to; otherwise `destroy <pool> --all --yes` skips every healthy slot
+// asking for --include-unlanded.
+func TestDestroyPool_TreatsSlotParkedOnItsBaseAsDisposable(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	addBranch(t, repoDir, "develop", "develop-only.txt")
+
+	wtPath, err := AcquireWithOptions(repoDir, poolDir, 1, nil, AcquireOptions{BaseBranch: "develop"})
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	if err := ReleaseConditional(poolDir, wtPath, "develop", ReleasePreconditions{}, nil); err != nil {
+		t.Fatalf("release failed: %v", err)
+	}
+
+	result, err := DestroyPool(poolDir, DestroyOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("DestroyPool failed: %v", err)
+	}
+	if len(result.Skipped) != 0 {
+		t.Fatalf("expected no skips for a slot parked on its own base, got %#v", result.Skipped)
+	}
+	if len(result.Planned) != 1 || result.Planned[0].Path != wtPath {
+		t.Fatalf("expected planned destroy of %s, got %#v", wtPath, result.Planned)
+	}
+}
+
+// Destroy still classifies work beyond the slot's own base as unlanded.
+func TestDestroyPool_SkipsSlotHoldingWorkBeyondItsBase(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	addBranch(t, repoDir, "develop", "develop-only.txt")
+
+	wtPath, err := AcquireWithOptions(repoDir, poolDir, 1, nil, AcquireOptions{BaseBranch: "develop"})
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	runGit(t, wtPath, "commit", "--allow-empty", "-m", "beyond develop")
+	clearOwnerReservation(t, poolDir, wtPath)
+
+	result, err := DestroyPool(poolDir, DestroyOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("DestroyPool failed: %v", err)
+	}
+	if len(result.Planned) != 0 {
+		t.Fatalf("expected no planned destroy, got %#v", result.Planned)
+	}
+	if !hasDestroySkip(result.Skipped, wtPath, DestroyUnmerged, IncludeUnlandedFlag) {
+		t.Fatalf("expected an unmerged skip needing --include-unlanded, got %#v", result.Skipped)
+	}
+}

@@ -196,7 +196,10 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 				continue
 			}
 			safe, resetRef, head, err := vcs.IsWorktreeSafeToReset(wt.Path, branch)
-			if err != nil || !safe {
+			if err != nil {
+				continue
+			}
+			if !safe && !headMergedIntoRecordedBase(wt, head) {
 				continue
 			}
 			// Found an available one. Reset it to the verified commit only if
@@ -287,6 +290,22 @@ func leaseInfoFromEntry(wt WorktreeEntry, baseBranch string) LeaseInfo {
 		LeasedAt:    wt.LeasedAt,
 		BaseBranch:  baseBranch,
 	}
+}
+
+// headMergedIntoRecordedBase reports whether a slot carries nothing beyond the
+// base it was parked on. Acquisitions that mix bases would otherwise wedge the
+// pool: a slot returned to develop is not merged into main, so a later plain
+// get skips it and builds a new slot until max_trees, with nothing able to
+// reclaim it. Work that only exists in the recorded base is as disposable as
+// work in the requested one; a slot holding commits beyond it is not, and is
+// still skipped. Fails closed on an unrecorded or unresolvable base, and on a
+// HEAD that moved between the two checks.
+func headMergedIntoRecordedBase(wt WorktreeEntry, head string) bool {
+	if wt.BaseBranch == "" {
+		return false
+	}
+	safe, _, recordedHead, err := vcs.IsWorktreeSafeToReset(wt.Path, wt.BaseBranch)
+	return err == nil && safe && recordedHead == head
 }
 
 // recordedBaseBranch reports the base a managed slot was last cut from, or ""

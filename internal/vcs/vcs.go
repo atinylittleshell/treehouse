@@ -415,6 +415,23 @@ func DefaultBranchMergeRefForWorktree(worktreePath, repoRoot string) (string, er
 	return backendForWorktree(worktreePath).DefaultBranchMergeRef(repoRoot)
 }
 
+// BaseBranchMergeRef returns the fully qualified ref for the base a pooled slot
+// records having been cut from, or "" when that base cannot be named and the
+// caller should keep the repository default ref. Git-only for the same reason
+// as VerifyBaseBranch: an explicit base is a git opt-in, and a jj slot's
+// recorded base is its own default bookmark anyway.
+func BaseBranchMergeRef(worktreePath, branch string) string {
+	if branch == "" || WorktreeBackendName(worktreePath) != "git" {
+		return ""
+	}
+	b := backendForWorktree(worktreePath)
+	repoRoot, err := b.FindRepoRootFrom(worktreePath)
+	if err != nil {
+		return ""
+	}
+	return gitvcs.BranchMergeRef(repoRoot, branch)
+}
+
 // DefaultBranchForWorktree returns the default branch of the repository that
 // owns worktreePath, with both the root discovery and the branch lookup
 // resolved by the worktree's own backend (the same dispatch as ResetWorktree

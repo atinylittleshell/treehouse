@@ -266,7 +266,8 @@ func (opts DestroyOptions) missingFlags(target DestroyTarget, allowLeased bool) 
 // classifyForDestroy determines a managed worktree's destroy class using the
 // same safety primitives prune relies on (ownerAlive,
 // process.FindProcessesInWorktree, backingRepositoryMissing, vcs.IsDirty,
-// vcs.IsHeadMergedIntoRef against the ref from resolvePruneDefaultRef).
+// vcs.IsHeadMergedIntoRef against the ref from resolvePruneDefaultRef, then
+// headLandedOnItsBase against the base the slot was cut from).
 func classifyForDestroy(wt WorktreeEntry, repoRoot, defaultRef string) DestroyTarget {
 	target := DestroyTarget{Name: wt.Name, Path: wt.Path, Flavor: vcs.WorktreeBackendName(wt.Path)}
 	if target.Flavor != "" && repoRoot != "" && target.Flavor != vcs.BackendNameFor(repoRoot) {
@@ -326,7 +327,7 @@ func classifyForDestroy(wt WorktreeEntry, repoRoot, defaultRef string) DestroyTa
 		target.addClass(DestroyUnverified, "cannot verify merge into "+ref+": "+err.Error())
 		return finalizeDestroyTarget(target)
 	}
-	if !merged {
+	if !merged && !headLandedOnItsBase(wt.Path, wt.BaseBranch) {
 		target.addClass(DestroyUnmerged, "HEAD not merged into "+ref)
 	}
 

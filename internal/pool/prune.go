@@ -332,6 +332,23 @@ func mergeRefForWorktree(worktreePath string, context pruneContext) (string, err
 	return vcs.DefaultBranchMergeRefForWorktree(worktreePath, context.RepoRoot)
 }
 
+// headLandedOnItsBase gives a slot that the default ref reports unmerged a
+// second reading against the base it was cut from and parked on. A pool
+// configured with a base the default does not contain would otherwise have
+// every pristine slot classified as holding unlanded work, and neither prune
+// nor destroy could reclaim it. It answers only a definitive "not merged":
+// callers reach it after the default-ref check succeeded, so an unverifiable
+// slot keeps that check's fail-closed classification, and an unrecorded or
+// unresolvable base reports false.
+func headLandedOnItsBase(worktreePath, baseBranch string) bool {
+	ref := vcs.BaseBranchMergeRef(worktreePath, baseBranch)
+	if ref == "" {
+		return false
+	}
+	merged, err := vcs.IsHeadMergedIntoRef(worktreePath, ref)
+	return err == nil && merged
+}
+
 func resolvePruneDefaultRef(repoRoot string) (string, error) {
 	if err := vcs.Fetch(repoRoot); err != nil {
 		return "", pruneVerificationError{
@@ -697,7 +714,7 @@ func analyzeIdleWorktree(resolveContext pruneContextResolver, wt WorktreeEntry, 
 		}
 		return worktree, skipped, true, context, nil
 	}
-	if !merged {
+	if !merged && !headLandedOnItsBase(worktree.Path, wt.BaseBranch) {
 		skipped = newPruneSkipped(wt.Name, wt.Path, PruneSkipUnmerged, fmt.Sprintf("HEAD not merged into %s", ref), "")
 		return worktree, skipped, true, context, nil
 	}
