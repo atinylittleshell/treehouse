@@ -470,3 +470,94 @@ func TestDestroyPool_SkipsSlotHoldingWorkBeyondItsBase(t *testing.T) {
 		t.Fatalf("expected an unmerged skip needing --include-unlanded, got %#v", result.Skipped)
 	}
 }
+
+// clearRecordedBaseBranch rewrites the slot's state entry the way a binary
+// predating base_branch wrote it, so upgrade behavior is exercised against a
+// real pre-feature state file rather than a hypothetical one.
+func clearRecordedBaseBranch(t *testing.T, poolDir, wtPath string) {
+	t.Helper()
+	state, err := ReadState(poolDir)
+	if err != nil {
+		t.Fatalf("ReadState failed: %v", err)
+	}
+	found := false
+	for i := range state.Worktrees {
+		if state.Worktrees[i].Path == wtPath {
+			state.Worktrees[i].BaseBranch = ""
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("worktree %s is not in the pool state", wtPath)
+	}
+	if err := WriteState(poolDir, state); err != nil {
+		t.Fatalf("WriteState failed: %v", err)
+	}
+}
+
+// Every pool that exists today was written without base_branch, so an empty
+// recorded base is the normal upgrade state. Failing closed on it left the
+// original wedge reachable for exactly those pools.
+func TestAcquire_RecyclesLegacySlotWithNoRecordedBase(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+
+	// The slot must park at a main tip develop does not contain, or it would be
+	// recycled by the ordinary requested-base check and never reach the fallback.
+	developTip := addBranch(t, repoDir, "develop", "develop-only.txt")
+	if err := os.WriteFile(filepath.Join(repoDir, "hotfix.txt"), []byte("hotfix\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "hotfix.txt")
+	runGit(t, repoDir, "commit", "-m", "hotfix on main")
+
+	wtPath, err := Acquire(repoDir, poolDir, 2, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	if err := Release(poolDir, wtPath); err != nil {
+		t.Fatalf("Release failed: %v", err)
+	}
+	clearRecordedBaseBranch(t, poolDir, wtPath)
+
+	reused, err := AcquireWithOptions(repoDir, poolDir, 2, nil, AcquireOptions{BaseBranch: "develop"})
+	if err != nil {
+		t.Fatalf("expected the legacy slot to be recycled onto develop: %v", err)
+	}
+	if reused != wtPath {
+		t.Fatalf("acquire built a new slot %s instead of recycling %s", reused, wtPath)
+	}
+	if got := gitOut(t, reused, "rev-parse", "HEAD"); got != developTip {
+		t.Errorf("recycled worktree HEAD = %s, want develop tip %s", got, developTip)
+	}
+}
+
+// The implicit default must not become an escape hatch either: a legacy slot
+// carrying commits beyond it still holds unlanded work.
+func TestAcquire_SkipsLegacySlotHoldingWorkBeyondTheDefault(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+
+	wtPath, err := Acquire(repoDir, poolDir, 1, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wtPath, "unlanded.txt"), []byte("keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, wtPath, "add", "unlanded.txt")
+	runGit(t, wtPath, "commit", "-m", "committed but unlanded")
+	head := gitOut(t, wtPath, "rev-parse", "HEAD")
+	clearOwnerReservation(t, poolDir, wtPath)
+	clearRecordedBaseBranch(t, poolDir, wtPath)
+
+	addBranch(t, repoDir, "develop", "develop-only.txt")
+
+	if _, err := AcquireWithOptions(repoDir, poolDir, 1, nil, AcquireOptions{BaseBranch: "develop"}); err == nil {
+		t.Fatal("expected acquire to fail closed rather than discard work beyond the implicit default")
+	}
+	if got := gitOut(t, wtPath, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("expected unlanded HEAD %s preserved, got %s", head, got)
+	}
+	if _, err := os.Stat(filepath.Join(wtPath, "unlanded.txt")); err != nil {
+		t.Fatalf("expected unlanded commit preserved on disk: %v", err)
+	}
+}

@@ -199,7 +199,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			if err != nil {
 				continue
 			}
-			if !safe && !headMergedIntoRecordedBase(wt, head) {
+			if !safe && !headMergedIntoRecordedBase(wt, branch, head) {
 				continue
 			}
 			// Found an available one. Reset it to the verified commit only if
@@ -296,15 +296,32 @@ func leaseInfoFromEntry(wt WorktreeEntry, baseBranch string) LeaseInfo {
 // base it was parked on. Acquisitions that mix bases would otherwise wedge the
 // pool: a slot returned to develop is not merged into main, so a later plain
 // get skips it and builds a new slot until max_trees, with nothing able to
-// reclaim it. Work that only exists in the recorded base is as disposable as
+// reclaim it. Work that only exists in the slot's own base is as disposable as
 // work in the requested one; a slot holding commits beyond it is not, and is
-// still skipped. Fails closed on an unrecorded or unresolvable base, and on a
-// HEAD that moved between the two checks.
-func headMergedIntoRecordedBase(wt WorktreeEntry, head string) bool {
-	if wt.BaseBranch == "" {
+// still skipped.
+//
+// An entry written before base_branch existed records no base, which is the
+// normal state of every pool being upgraded, so the repository default stands
+// in as its implicit base. That widens nothing: prune already reclaims exactly
+// those slots as merged into the default ref.
+//
+// Fails closed on an unresolvable base, an errored check, and a HEAD that moved
+// between the two readings. A base equal to the requested branch answers false
+// without asking git again: the caller reaches this only after that same query
+// returned unsafe.
+func headMergedIntoRecordedBase(wt WorktreeEntry, requested, head string) bool {
+	base := wt.BaseBranch
+	if base == "" {
+		resolved, err := vcs.DefaultBranchForWorktree(wt.Path)
+		if err != nil {
+			return false
+		}
+		base = resolved
+	}
+	if base == requested {
 		return false
 	}
-	safe, _, recordedHead, err := vcs.IsWorktreeSafeToReset(wt.Path, wt.BaseBranch)
+	safe, _, recordedHead, err := vcs.IsWorktreeSafeToReset(wt.Path, base)
 	return err == nil && safe && recordedHead == head
 }
 
