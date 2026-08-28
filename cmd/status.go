@@ -63,16 +63,20 @@ var statusCmd = &cobra.Command{
 			return writeStatusJSON(worktrees)
 		}
 
-		if len(worktrees) == 0 {
-			fmt.Fprintln(os.Stderr, "🌳 No worktrees in pool.")
-			return nil
-		}
-
 		green := color.New(color.FgGreen).SprintFunc()
 		red := color.New(color.FgRed).SprintFunc()
 		yellow := color.New(color.FgYellow).SprintFunc()
 		cyan := color.New(color.FgCyan, color.Bold).SprintFunc()
 		magenta := color.New(color.FgMagenta).SprintFunc()
+
+		// Printed before the rows, and before the empty-pool message, because
+		// it describes what the pool will hand out rather than what is in it.
+		fmt.Fprintln(os.Stdout, baseBranchLine(repoRoot, cfg, yellow))
+
+		if len(worktrees) == 0 {
+			fmt.Fprintln(os.Stderr, "🌳 No worktrees in pool.")
+			return nil
+		}
 
 		// statusWidth must be >= longest status string ("you're here" = 11)
 		const statusWidth = 11
@@ -123,6 +127,34 @@ var statusCmd = &cobra.Command{
 func init() {
 	statusCmd.Flags().BoolVar(&statusJSON, "json", false, "Print pool status as JSON")
 	rootCmd.AddCommand(statusCmd)
+}
+
+// baseBranchLine reports the branch new and recycled worktrees are cut from,
+// so the answer to "what will my next get be based on" does not require
+// reading git internals or treehouse's source.
+//
+// It never fails the command. status is a read-only report, and a base that
+// cannot be resolved is precisely what the reader needs to be told: every get
+// will fail until it is fixed. The line is human output only -- status --json
+// is a top-level array that machine callers already parse, and reporting a
+// pool-level fact there would mean wrapping it in an object and breaking every
+// existing consumer.
+func baseBranchLine(repoRoot string, cfg config.Config, warn func(a ...interface{}) string) string {
+	const prefix = "base  "
+	if cfg.BaseBranch == "" {
+		branch, err := vcs.GetDefaultBranch(repoRoot)
+		if err != nil {
+			return prefix + warn(fmt.Sprintf("cannot be determined (%v)", err))
+		}
+		return prefix + branch + "  (repository default)"
+	}
+	if err := vcs.VerifyBaseBranch(repoRoot, cfg.BaseBranch); err != nil {
+		// Deliberately short: this sits above a table, and the reader needs to
+		// know the base is broken, not why in full. 'treehouse get' prints the
+		// complete diagnosis when they act on it.
+		return prefix + cfg.BaseBranch + warn("  (configured, but cannot be resolved — 'treehouse get' will fail)")
+	}
+	return prefix + cfg.BaseBranch + "  (configured)"
 }
 
 func writeStatusJSON(worktrees []pool.WorktreeStatus) error {

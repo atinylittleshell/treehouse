@@ -179,3 +179,77 @@ func TestGetInteractiveUsesBaseBranchAndParksSlotThere(t *testing.T) {
 		t.Errorf("returned slot HEAD = %s, want develop tip %s", got, developTip)
 	}
 }
+
+func TestStatusShowsConfiguredBaseBranch(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	addE2EBranch(t, repoDir, "develop", "develop-only.txt")
+	writeRepoConfig(t, repoDir, "base_branch = \"develop\"\n")
+
+	if _, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease"); code != 0 {
+		t.Fatalf("get --lease failed: %s", stderr)
+	}
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "status")
+	if code != 0 {
+		t.Fatalf("status failed (code %d): %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "base") || !strings.Contains(stdout, "develop") {
+		t.Errorf("expected status to report the configured base branch, got:\n%s", stdout)
+	}
+}
+
+func TestStatusShowsInferredBaseBranch(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "status")
+	if code != 0 {
+		t.Fatalf("status failed (code %d): %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "main") {
+		t.Errorf("expected status to report the inferred base branch, got:\n%s", stdout)
+	}
+}
+
+// A base_branch that does not resolve is exactly what a reader needs told:
+// every get will fail until it is fixed. status still exits 0, because it is a
+// read-only report.
+func TestStatusFlagsUnresolvableConfiguredBaseBranch(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	writeRepoConfig(t, repoDir, "base_branch = \"no-such-branch\"\n")
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "status")
+	if code != 0 {
+		t.Fatalf("status must stay a read-only report and exit 0, got %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "no-such-branch") {
+		t.Errorf("expected status to name the unresolvable base branch, got:\n%s", stdout)
+	}
+}
+
+// status --json is a top-level ARRAY that machine callers already parse.
+// Reporting the base must not turn it into an object.
+func TestStatusJSONRemainsATopLevelArray(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	addE2EBranch(t, repoDir, "develop", "develop-only.txt")
+	writeRepoConfig(t, repoDir, "base_branch = \"develop\"\n")
+
+	if _, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease"); code != 0 {
+		t.Fatalf("get --lease failed: %s", stderr)
+	}
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "status", "--json")
+	if code != 0 {
+		t.Fatalf("status --json failed (code %d): %s", code, stderr)
+	}
+	var statuses []statusJSONResult
+	if err := json.Unmarshal([]byte(stdout), &statuses); err != nil {
+		t.Fatalf("status --json is no longer a top-level array: %v\n%s", err, stdout)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("expected 1 worktree, got %d: %s", len(statuses), stdout)
+	}
+	// The human base line must not leak into machine output.
+	if strings.Contains(stdout, "base") && !strings.Contains(stdout, "\"base") {
+		t.Errorf("unexpected human base line in JSON output:\n%s", stdout)
+	}
+}
