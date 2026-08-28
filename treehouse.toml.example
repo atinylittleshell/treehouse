@@ -14,6 +14,16 @@ max_trees = 16
 # code and removed with the project.
 # root = "."
 
+# Optional base branch: the branch new and recycled worktrees are cut from.
+# Unset (default) infers it from the repository, unchanged from before:
+# origin/HEAD, then the checked-out branch, then init.defaultBranch.
+# When set, the branch must exist locally or on origin -- treehouse fails
+# closed instead of quietly falling back to the inferred default.
+# Whichever of <branch> and origin/<branch> is further ahead wins, preferring
+# origin when they have diverged, exactly as the inferred default behaves.
+# Override per-command with the --base flag.
+# base_branch = "develop"
+
 # Version-control backend selection. Git is the default everywhere. Set
 # "jj" to opt in to the experimental Jujutsu backend for this repository
 # (or per-command with TREEHOUSE_VCS=jj). Pooled jj workspaces inherit this
