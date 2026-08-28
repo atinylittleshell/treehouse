@@ -1986,7 +1986,7 @@ func TestRelease_PreIdentityLeaseFailsConditionalAndAllowsLegacyReturn(t *testin
 		t.Fatal(err)
 	}
 
-	err = ReleaseConditional(poolDir, lease.Path, ReleasePreconditions{ExpectedLeaseID: &lease.LeaseID}, nil)
+	err = ReleaseConditional(poolDir, lease.Path, "", ReleasePreconditions{ExpectedLeaseID: &lease.LeaseID}, nil)
 	if !errors.Is(err, ErrLeasePreconditionFailed) {
 		t.Fatalf("conditional release of pre-identity lease = %v, want precondition failure", err)
 	}
@@ -2205,7 +2205,7 @@ func TestReleaseConditional_ConcurrentIdentityReleasesExactlyOnce(t *testing.T) 
 		ExpectedLeaseHolder: &lease.LeaseHolder,
 	}
 	release := func() {
-		results <- ReleaseConditional(poolDir, lease.Path, preconditions, func() error {
+		results <- ReleaseConditional(poolDir, lease.Path, "", preconditions, func() error {
 			if preparationCalls.Add(1) == 1 {
 				close(enteredBoundary)
 				<-allowReset

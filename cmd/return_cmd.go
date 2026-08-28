@@ -60,14 +60,14 @@ var returnCmd = &cobra.Command{
 				err = confirmWorktreeReturn(wtPath)
 			}
 			if err == nil {
-				err = pool.ReleaseConditional(poolDir, wtPath, preconditions, func() error {
+				err = pool.ReleaseConditional(poolDir, wtPath, returnBaseBranch(wtPath), preconditions, func() error {
 					return finalizeWorktreeReturn(wtPath)
 				})
 			}
 		} else {
 			err = confirmWorktreeReturn(wtPath)
 			if err == nil {
-				err = pool.ReleaseConditional(poolDir, wtPath, pool.ReleasePreconditions{}, func() error {
+				err = pool.ReleaseConditional(poolDir, wtPath, returnBaseBranch(wtPath), pool.ReleasePreconditions{}, func() error {
 					return finalizeWorktreeReturn(wtPath)
 				})
 			}
@@ -126,6 +126,28 @@ func resolveWorktreePath(args []string) (string, error) {
 		return filepath.Abs(env)
 	}
 	return os.Getwd()
+}
+
+// returnBaseBranch resolves the configured base branch for the repository that
+// owns wtPath, so a worktree returned by 'treehouse return' is parked exactly
+// where 'treehouse get' leaves one. Anything it cannot resolve yields "", the
+// repository default, because a return must never fail over configuration.
+func returnBaseBranch(wtPath string) string {
+	if vcs.WorktreeBackendName(wtPath) == "" {
+		// Damaged slot: it is never reset, so the branch is unused, and
+		// resolving through the fallback would answer for the repository
+		// enclosing an in-project pool.
+		return ""
+	}
+	repoRoot, err := vcs.FindMainRepoRootFrom(wtPath)
+	if err != nil {
+		return ""
+	}
+	cfg, err := config.Load(repoRoot)
+	if err != nil {
+		return ""
+	}
+	return releaseBaseBranch(repoRoot, cfg)
 }
 
 func resolveReturnPoolDir(wtPath string, explicitPath bool) (string, error) {

@@ -188,3 +188,59 @@ func TestAcquireLeaseInfo_ReportsInferredDefaultBranch(t *testing.T) {
 		t.Errorf("lease BaseBranch = %q, want main", lease.BaseBranch)
 	}
 }
+
+// A returned slot must be parked on the branch the pool cuts from, not on the
+// repository default. Acquire only recycles a slot whose HEAD is merged into
+// the base it is about to be reset to, so a slot parked on a default branch
+// that is not an ancestor of the base is unreusable forever: every acquire
+// creates another slot until max_trees is exhausted.
+func TestRelease_ParksWorktreeOnConfiguredBaseBranch(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	developTip := addBranch(t, repoDir, "develop", "develop-only.txt")
+
+	// main advances past develop, exactly as a hotfix landed on main alone
+	// would leave it. main's tip is now not an ancestor of develop.
+	if err := os.WriteFile(filepath.Join(repoDir, "hotfix.txt"), []byte("hotfix\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "hotfix.txt")
+	runGit(t, repoDir, "commit", "-m", "hotfix on main")
+
+	first, err := AcquireWithOptions(repoDir, poolDir, 2, nil, AcquireOptions{BaseBranch: "develop"})
+	if err != nil {
+		t.Fatalf("first acquire failed: %v", err)
+	}
+	if err := ReleaseConditional(poolDir, first, "develop", ReleasePreconditions{}, nil); err != nil {
+		t.Fatalf("release failed: %v", err)
+	}
+	if got := gitOut(t, first, "rev-parse", "HEAD"); got != developTip {
+		t.Errorf("returned worktree HEAD = %s, want develop tip %s", got, developTip)
+	}
+
+	second, err := AcquireWithOptions(repoDir, poolDir, 2, nil, AcquireOptions{BaseBranch: "develop"})
+	if err != nil {
+		t.Fatalf("second acquire failed: %v", err)
+	}
+	if second != first {
+		t.Errorf("second acquire created a new slot %s instead of recycling %s", second, first)
+	}
+}
+
+// An empty base keeps the repository default, so returning a worktree in a
+// pool with no configured base is untouched.
+func TestRelease_WithoutBaseBranchParksOnRepositoryDefault(t *testing.T) {
+	repoDir, poolDir := setupRepo(t)
+	addBranch(t, repoDir, "develop", "develop-only.txt")
+	mainTip := gitOut(t, repoDir, "rev-parse", "HEAD")
+
+	wtPath, err := Acquire(repoDir, poolDir, 1, nil)
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	if err := Release(poolDir, wtPath); err != nil {
+		t.Fatalf("release failed: %v", err)
+	}
+	if got := gitOut(t, wtPath, "rev-parse", "HEAD"); got != mainTip {
+		t.Errorf("returned worktree HEAD = %s, want main tip %s", got, mainTip)
+	}
+}

@@ -120,7 +120,7 @@ func getRunE(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := returnWorktreeToPool(poolDir, wtPath); err != nil {
+	if err := returnWorktreeToPool(poolDir, wtPath, releaseBaseBranch(repoRoot, cfg)); err != nil {
 		fmt.Fprintf(os.Stderr, "🌳 Warning: %v; leaving worktree in place.\n", err)
 		return err
 	}
@@ -134,10 +134,34 @@ func getRunE(cmd *cobra.Command, args []string) error {
 // as the release's beforeReset step, under the same state lock and immediately
 // before the reset, so a writer that re-enters the worktree cannot slip between
 // the emptiness check and the destructive reset.
-func returnWorktreeToPool(poolDir, wtPath string) error {
-	return pool.ReleaseConditional(poolDir, wtPath, pool.ReleasePreconditions{}, func() error {
+func returnWorktreeToPool(poolDir, wtPath, baseBranch string) error {
+	return pool.ReleaseConditional(poolDir, wtPath, baseBranch, pool.ReleasePreconditions{}, func() error {
 		return killLingeringProcesses(wtPath)
 	})
+}
+
+// releaseBaseBranch returns the branch a returned worktree should be parked on:
+// the pool's configured base_branch, or "" for the repository's inferred
+// default.
+//
+// It reads the configured base rather than whatever --base this invocation
+// used, because parking is about what the NEXT acquire can recycle. A slot
+// parked on a one-off base would be unreusable by an ordinary get for the same
+// reason a slot parked on the default is unreusable under a configured base.
+//
+// A base that does not resolve degrades to the default with a warning instead
+// of failing. Returning is the operation that must always be possible: a
+// base_branch typo would otherwise make every reset fail and strand the
+// reservation, and 'treehouse get' already reports that typo as a real error.
+func releaseBaseBranch(repoRoot string, cfg config.Config) string {
+	if cfg.BaseBranch == "" {
+		return ""
+	}
+	if err := vcs.VerifyBaseBranch(repoRoot, cfg.BaseBranch); err != nil {
+		fmt.Fprintf(os.Stderr, "🌳 Warning: cannot return the worktree to base branch %q (%v); using the repository default instead.\n", cfg.BaseBranch, err)
+		return ""
+	}
+	return cfg.BaseBranch
 }
 
 // getLeaseRunE performs a non-interactive, durable acquire. It writes either the

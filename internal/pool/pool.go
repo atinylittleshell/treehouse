@@ -344,7 +344,7 @@ type ReleasePreconditions struct {
 // durable lease, and returns it to the available pool. It retains the legacy
 // unconditional behavior of releasing by path.
 func Release(poolDir, worktreePath string) error {
-	return ReleaseConditional(poolDir, worktreePath, ReleasePreconditions{}, nil)
+	return ReleaseConditional(poolDir, worktreePath, "", ReleasePreconditions{}, nil)
 }
 
 // ValidateReleasePreconditions checks that a managed worktree still matches
@@ -369,7 +369,15 @@ func ValidateReleasePreconditions(poolDir, worktreePath string, preconditions Re
 // in an in-project pool resolves the repository ENCLOSING the pool. Its
 // reservation is still cleared so the slot is not stuck leased, and the damaged
 // slot is left for destroy; acquire refuses to reuse it.
-func ReleaseConditional(poolDir, worktreePath string, preconditions ReleasePreconditions, beforeReset func() error) error {
+//
+// baseBranch parks the returned slot on the branch the pool cuts from; empty
+// keeps the repository's inferred default. Callers must pass a branch they have
+// already verified, because failing to reset here would leave the reservation
+// held. Parking matters for reuse, not just tidiness: acquire recycles a slot
+// only when its HEAD is merged into the base it is about to be reset to, so a
+// slot parked on a default branch that is not an ancestor of the base can never
+// be recycled, and every acquire creates another slot until max_trees runs out.
+func ReleaseConditional(poolDir, worktreePath, baseBranch string, preconditions ReleasePreconditions, beforeReset func() error) error {
 	markerless := vcs.WorktreeBackendName(worktreePath) == ""
 	branch := ""
 	if !markerless {
@@ -378,6 +386,9 @@ func ReleaseConditional(poolDir, worktreePath string, preconditions ReleasePreco
 			return err
 		}
 		branch = resolved
+		if baseBranch != "" {
+			branch = baseBranch
+		}
 	}
 	return WithStateLock(poolDir, func() error {
 		state, err := ReadState(poolDir)
