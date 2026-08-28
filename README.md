@@ -144,6 +144,7 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
 ```
 
 - **Detached HEAD** — worktrees use detached HEAD mode, reset to whichever of the local or remote default branch is further ahead, avoiding branch name conflicts entirely.
+- **Choosable base branch** — set `base_branch` in `treehouse.toml`, or pass `treehouse get --base <branch>`, to cut worktrees from a branch other than the repository default. Opt-in; unset keeps today's inference. Worktrees stay in detached HEAD — this selects the commit they start at, it does not create or check out a branch.
 - **No daemon** - all operations are inline CLI commands.
   Pool state is a small on-disk file, written under a lock by each command.
 - **In-use detection** — treehouse scans running processes and short-lived owner reservations to determine which worktrees are in-use. Reservations are persisted only while `get`, `destroy`, and `prune` lifecycle work is running.
@@ -180,7 +181,8 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
 | --------- | --------- | --------------------------------- |
 | `get`     | `--lease` | Durably lease the worktree without opening a subshell; print only its path to stdout |
 | `get`     | `--lease-holder` | Optional label recorded as the lease holder (defaults to `$TREEHOUSE_LEASE_HOLDER`) |
-| `get`     | `--json` | Print `path`, `lease_id`, `lease_holder`, and `leased_at` as JSON (requires `--lease`) |
+| `get`     | `--json` | Print `path`, `lease_id`, `lease_holder`, `leased_at`, and `base_branch` as JSON (requires `--lease`) |
+| `get`     | `--base` | Branch to cut this worktree from, overriding `base_branch` in config |
 | `enter`   | `--print-path` | Print only the worktree's absolute path to stdout instead of opening a subshell (for `cd "$(treehouse enter --print-path 1)"`) |
 | `status`  | `--json` | Print worktree status and lease metadata as JSON |
 | `return`  | `--force` | Clean, reset, and return without prompting |
@@ -220,7 +222,7 @@ Every acquisition receives a new random `lease_id`, including reacquiring the sa
 
 ```sh
 treehouse get --lease --lease-holder automation-A --json
-# {"path":"...","lease_id":"...","lease_holder":"automation-A","leased_at":"..."}
+# {"path":"...","lease_id":"...","lease_holder":"automation-A","leased_at":"...","base_branch":"main"}
 ```
 
 Callers that already fetched the required refs can avoid another network operation with `--no-fetch`:
@@ -341,6 +343,10 @@ max_trees = 16
 # Use an absolute user-level root for treehouse prune --all.
 # root = "$HOME/worktrees"
 
+# Optional base branch worktrees are cut from.
+# Unset infers it from the repository (see "Base branch" below).
+# base_branch = "develop"
+
 # Optional version-control backend. Git is the default everywhere; set "jj"
 # to opt in to the experimental Jujutsu backend
 # (see "Version-control backend" below).
@@ -350,6 +356,35 @@ max_trees = 16
 The repo-level config takes precedence for repo-safe settings.
 `treehouse prune --all` can run without a repository, so it uses only the user-level config and does not read per-repo `treehouse.toml` files while sweeping.
 If no config is found, the default pool size is 16.
+
+### Base branch
+
+By default Treehouse infers the branch worktrees are cut from: `origin/HEAD`, then the checked-out branch, then `init.defaultBranch`.
+That inference is invisible and can drift — `origin/HEAD` is only set at clone time, and some clones never have it at all.
+
+Set it explicitly for the whole pool:
+
+```toml
+base_branch = "develop"
+```
+
+or for a single acquisition:
+
+```sh
+treehouse get --base develop
+treehouse get --lease --base release/2.x --json
+```
+
+`--base` wins over `base_branch`, and both are opt-in: with neither set, the inference is unchanged.
+
+A few things worth knowing:
+
+- **Worktrees stay in detached HEAD.** This selects the commit a worktree starts at; it does not create or check out a branch. There is no `-b` shorthand, because `-b` means branch *creation* in git and this flag creates nothing.
+- **Branch names only.** `develop`, not `origin/develop`, a tag, or a commit SHA. Whichever of `develop` and `origin/develop` is further ahead wins, preferring `origin` when they have diverged — exactly how the inferred default behaves.
+- **It fails closed.** A base that resolves to neither a local branch nor `origin/<branch>` is an error; Treehouse never falls back to the inferred default, which would hand you a worktree cut from the wrong branch and report success. `treehouse status` shows the resolved base, and flags a configured one it cannot resolve.
+- **Returned worktrees are parked on the configured base**, so the pool keeps recycling. A slot parked elsewhere could not be reused whenever the base is not a descendant of it.
+- **Existing pools migrate on their own.** Slots cut from the old default are recycled onto the new base as soon as the old base is an ancestor of it. A slot holding commits the new base does not contain is still refused, as always.
+- **Git backend only for now.** Under the jj backend an explicit base fails with a clear error rather than silently using the default bookmark.
 
 ### Version-control backend (git or Jujutsu)
 
