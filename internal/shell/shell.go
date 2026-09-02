@@ -56,7 +56,16 @@ func supportsLoginShellArgs(shellPath string) bool {
 
 	switch filepath.Base(resolvedPath) {
 	case "bash", "fish", "zsh":
-		return true
+		knownShell, err := exec.LookPath(filepath.Base(resolvedPath))
+		if err != nil {
+			return false
+		}
+		knownShellInfo, err := os.Stat(knownShell)
+		if err != nil {
+			return false
+		}
+		shellInfo, err := os.Stat(resolvedPath)
+		return err == nil && os.SameFile(shellInfo, knownShellInfo)
 	default:
 		return false
 	}
