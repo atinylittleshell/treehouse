@@ -56,6 +56,10 @@ func supportsLoginShellArgs(shellPath string) bool {
 
 	switch filepath.Base(resolvedPath) {
 	case "bash", "fish", "zsh":
+		// Contract: a supported resolved basename means the executable is that
+		// shell and accepts -i -l. A same-named regular (non-symlink) wrapper
+		// that cannot parse those flags stays an accepted limitation: probing
+		// for PATH identity would reject genuine second installs.
 		return true
 	default:
 		return false
