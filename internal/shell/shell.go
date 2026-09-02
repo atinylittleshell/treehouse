@@ -8,6 +8,7 @@ import (
 
 func Spawn(dir string, env []string) (int, error) {
 	shellPath := os.Getenv("SHELL")
+	hasUserShell := shellPath != ""
 	if shellPath == "" {
 		if runtime.GOOS == "windows" {
 			shellPath = os.Getenv("COMSPEC")
@@ -19,7 +20,7 @@ func Spawn(dir string, env []string) (int, error) {
 		}
 	}
 
-	cmd := exec.Command(shellPath)
+	cmd := exec.Command(shellPath, shellArgs(runtime.GOOS, hasUserShell)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdin = os.Stdin
@@ -33,4 +34,11 @@ func Spawn(dir string, env []string) (int, error) {
 		return 1, err
 	}
 	return 0, nil
+}
+
+func shellArgs(goos string, hasUserShell bool) []string {
+	if goos != "windows" && hasUserShell {
+		return []string{"-i", "-l"}
+	}
+	return nil
 }
