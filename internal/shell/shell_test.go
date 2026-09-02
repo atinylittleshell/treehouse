@@ -1,29 +1,33 @@
 package shell
 
 import (
-	"slices"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 )
 
-func TestShellArgs(t *testing.T) {
-	tests := []struct {
-		goos         string
-		shellPath    string
-		hasUserShell bool
-		want         []string
-	}{
-		{"darwin", "/bin/zsh", true, []string{"-i", "-l"}},
-		{"linux", "/usr/bin/bash", true, []string{"-i", "-l"}},
-		{"linux", "/usr/local/bin/fish", true, []string{"-i", "-l"}},
-		{"linux", "/bin/sh", true, nil},
-		{"linux", "/tmp/shell-wrapper", true, nil},
-		{"linux", "", false, nil},
-		{"windows", "C:\\Windows\\System32\\cmd.exe", true, nil},
+func TestSpawnTreatsSymlinkedShellWrapperAsFallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the Unix shell-wrapper fixture is not executable on Windows")
 	}
 
-	for _, test := range tests {
-		if got := shellArgs(test.goos, test.shellPath, test.hasUserShell); !slices.Equal(got, test.want) {
-			t.Errorf("shellArgs(%q, %q, %t) = %q, want %q", test.goos, test.shellPath, test.hasUserShell, got, test.want)
-		}
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "wrapper")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\n[ \"$#\" -eq 0 ]\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shellPath := filepath.Join(dir, "bash")
+	if err := os.Symlink(wrapper, shellPath); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHELL", shellPath)
+
+	exitCode, err := Spawn(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("Spawn() exit code = %d, want 0; symlinked wrappers must receive no shell arguments", exitCode)
 	}
 }

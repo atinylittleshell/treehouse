@@ -45,7 +45,16 @@ func shellArgs(goos, shellPath string, hasUserShell bool) []string {
 }
 
 func supportsLoginShellArgs(shellPath string) bool {
-	switch filepath.Base(shellPath) {
+	executable, err := exec.LookPath(shellPath)
+	if err != nil {
+		return false
+	}
+	resolvedPath, err := filepath.EvalSymlinks(executable)
+	if err != nil {
+		return false
+	}
+
+	switch filepath.Base(resolvedPath) {
 	case "bash", "fish", "zsh":
 		return true
 	default:
