@@ -3,6 +3,7 @@ package shell
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 )
 
@@ -20,7 +21,7 @@ func Spawn(dir string, env []string) (int, error) {
 		}
 	}
 
-	cmd := exec.Command(shellPath, shellArgs(runtime.GOOS, hasUserShell)...)
+	cmd := exec.Command(shellPath, shellArgs(runtime.GOOS, shellPath, hasUserShell)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdin = os.Stdin
@@ -36,9 +37,18 @@ func Spawn(dir string, env []string) (int, error) {
 	return 0, nil
 }
 
-func shellArgs(goos string, hasUserShell bool) []string {
-	if goos != "windows" && hasUserShell {
+func shellArgs(goos, shellPath string, hasUserShell bool) []string {
+	if goos != "windows" && hasUserShell && supportsLoginShellArgs(shellPath) {
 		return []string{"-i", "-l"}
 	}
 	return nil
+}
+
+func supportsLoginShellArgs(shellPath string) bool {
+	switch filepath.Base(shellPath) {
+	case "bash", "fish", "zsh":
+		return true
+	default:
+		return false
+	}
 }
