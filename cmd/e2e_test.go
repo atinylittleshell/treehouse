@@ -466,6 +466,38 @@ func TestGetAndStatus(t *testing.T) {
 	}
 }
 
+func TestGetStartsBashAsInteractiveLoginShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Bash login profiles are not available on Windows")
+	}
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skipf("bash is unavailable: %v", err)
+	}
+
+	repoDir, homeDir := setupTestRepo(t)
+	marker := filepath.Join(homeDir, "profile-loaded")
+	profile := "case $- in *i*) printf 'interactive login profile loaded' > \"$HOME/profile-loaded\" ;; *) printf 'non-interactive login profile loaded' > \"$HOME/profile-loaded\" ;; esac\n"
+	if err := os.WriteFile(filepath.Join(homeDir, ".bash_profile"), []byte(profile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runTreehouse(t, repoDir, homeDir, []string{"SHELL=" + bash}, "get")
+	if code != 0 {
+		t.Fatalf("treehouse get failed (code %d): %s", code, stderr)
+	}
+
+	got, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("Bash profile marker was not written: %v", err)
+	}
+	if string(got) != "interactive login profile loaded" {
+		t.Fatalf("Bash profile marker = %q, want interactive login profile loaded", got)
+	}
+	t.Logf("treehouse get user-visible shell initialization: %s", got)
+}
+
 func TestGetLeasePrintsOnlyPathToStdout(t *testing.T) {
 	repoDir, homeDir := setupTestRepo(t)
 
