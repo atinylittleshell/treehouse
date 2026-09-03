@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -619,6 +620,49 @@ func TestApplyE2E(t *testing.T) {
 		if info.Mode()&0o111 == 0 {
 			t.Error("expected executable permissions on replaced binary")
 		}
+	}
+}
+
+func TestAtomicReplaceRunningWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows running-image replacement")
+	}
+
+	dir := t.TempDir()
+	targetPath := filepath.Join(dir, "hold.exe")
+	holdSrc := filepath.Join("testdata", "holdopen", "main.go")
+	build := exec.Command("go", "build", "-o", targetPath, holdSrc)
+	out, err := build.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go build holdopen: %v\n%s", err, out)
+	}
+
+	cmd := exec.Command(targetPath)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start holdopen: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+	time.Sleep(200 * time.Millisecond)
+
+	newBinaryPath := filepath.Join(dir, "new.bin")
+	newContent := []byte("replacement-bytes")
+	if err := os.WriteFile(newBinaryPath, newContent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := atomicReplace(targetPath, newBinaryPath); err != nil {
+		t.Fatalf("atomicReplace running windows exe: %v", err)
+	}
+
+	got, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(newContent) {
+		t.Errorf("replaced = %q, want %q", string(got), string(newContent))
 	}
 }
 
