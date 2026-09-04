@@ -619,10 +619,35 @@ func atomicReplace(target, newBinary string) error {
 
 	// Atomic rename
 	if err := os.Rename(tmpPath, target); err != nil {
+		if runtime.GOOS == "windows" {
+			if werr := replaceRunningWindows(target, tmpPath); werr == nil {
+				return nil
+			}
+		}
 		os.Remove(tmpPath)
 		return err
 	}
 
+	return nil
+}
+
+// replaceRunningWindows moves a locked running image aside, then places the
+// new binary at the original path. Windows allows renaming a mapped .exe even
+// though overwriting it in place returns Access is denied.
+//
+// The backup name is unique per attempt. A prior update can leave target.old
+// mapped by a still-running process, so a fixed .old path cannot be removed
+// or reused as the next rename destination.
+func replaceRunningWindows(target, tmpPath string) error {
+	oldPath := fmt.Sprintf("%s.old.%d.%d", target, os.Getpid(), time.Now().UnixNano())
+	if err := os.Rename(target, oldPath); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		_ = os.Rename(oldPath, target)
+		return err
+	}
+	_ = os.Remove(oldPath)
 	return nil
 }
 
