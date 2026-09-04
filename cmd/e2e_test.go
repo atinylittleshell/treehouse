@@ -394,6 +394,17 @@ func TestInit(t *testing.T) {
 	if !strings.Contains(string(data), "max_trees") {
 		t.Errorf("treehouse.toml missing max_trees: %s", data)
 	}
+	// The optional keys are documented as commented guidance, never set.
+	for _, key := range []string{"root", "base_branch", "unique_leaf"} {
+		if !strings.Contains(string(data), key+" = ") {
+			t.Errorf("treehouse.toml missing %s guidance: %s", key, data)
+		}
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") && strings.Contains(line, "unique_leaf") {
+			t.Errorf("treehouse.toml should not set unique_leaf: %s", data)
+		}
+	}
 }
 
 func TestInitAlreadyExists(t *testing.T) {
