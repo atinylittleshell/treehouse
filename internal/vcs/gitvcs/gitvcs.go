@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/kunchenguid/treehouse/internal/deadline"
 )
@@ -582,6 +583,15 @@ func runGit(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// waitDelay bounds how long a killed command may keep the pipes open before
+// they are force-closed. Killing the context only kills the direct child: git
+// runs its network transports as grandchildren (git-remote-http, ssh), and
+// those inherit the output pipes, so Output would keep blocking on them long
+// after the deadline fired. Without this the deadline is not authoritative -
+// measured at 20s of overrun on a 5s budget against an unresponsive ssh
+// remote.
+const waitDelay = 5 * time.Second
+
 // runGitRaw runs one git command bounded by the process deadline.
 //
 // Every network-facing git operation treehouse runs - `fetch` above all - can
@@ -594,6 +604,7 @@ func runGitRaw(dir string, args ...string) ([]byte, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.WaitDelay = waitDelay
 	if dir != "" {
 		cmd.Dir = dir
 	}

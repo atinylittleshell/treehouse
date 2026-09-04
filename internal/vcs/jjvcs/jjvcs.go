@@ -34,6 +34,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/kunchenguid/treehouse/internal/deadline"
 )
@@ -550,6 +551,15 @@ func revsetNonEmpty(dir, revset string) bool {
 	return err == nil && out != ""
 }
 
+// waitDelay bounds how long a killed command may keep the pipes open before
+// they are force-closed. Killing the context only kills the direct child: git
+// runs its network transports as grandchildren (git-remote-http, ssh), and
+// those inherit the output pipes, so Output would keep blocking on them long
+// after the deadline fired. Without this the deadline is not authoritative -
+// measured at 20s of overrun on a 5s budget against an unresponsive ssh
+// remote.
+const waitDelay = 5 * time.Second
+
 // runJJ runs one jj command bounded by the process deadline, for the same
 // reason runGitRaw is: jj shells out to git for network transport, so a jj
 // fetch against a silent origin hangs exactly as a git fetch does.
@@ -559,6 +569,7 @@ func runJJ(dir string, args ...string) (string, error) {
 
 	fullArgs := append([]string{"--color", "never"}, args...)
 	cmd := exec.CommandContext(ctx, "jj", fullArgs...)
+	cmd.WaitDelay = waitDelay
 	if dir != "" {
 		cmd.Dir = dir
 	}
