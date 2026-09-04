@@ -23,6 +23,7 @@ var (
 var (
 	errReturnWorktreeUnmanaged = errors.New("return worktree unmanaged")
 	errReturnAborted           = errors.New("return aborted")
+	errReturnAbortedNonTTY     = errors.New("return aborted: non-tty dirty")
 )
 
 var returnCmd = &cobra.Command{
@@ -72,6 +73,10 @@ var returnCmd = &cobra.Command{
 				})
 			}
 		}
+		if errors.Is(err, errReturnAbortedNonTTY) {
+			fmt.Fprintln(os.Stderr, "🌳 Aborted. Dirty worktree left in place; prune will not reclaim this slot. Use 'treehouse return --force' to clean and return it.")
+			return nil
+		}
 		if errors.Is(err, errReturnAborted) {
 			fmt.Fprintln(os.Stderr, "🌳 Aborted.")
 			return nil
@@ -97,7 +102,10 @@ func confirmWorktreeReturn(wtPath string) error {
 		dirty, _ := vcs.IsDirty(wtPath)
 		if dirty {
 			ok, err := ui.Confirm("Worktree has uncommitted changes. Clean and return?", true)
-			if err != nil || !ok {
+			if err != nil {
+				return errReturnAbortedNonTTY
+			}
+			if !ok {
 				return errReturnAborted
 			}
 		}
