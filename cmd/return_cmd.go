@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -74,7 +75,7 @@ var returnCmd = &cobra.Command{
 			}
 		}
 		if errors.Is(err, errReturnAbortedNonTTY) {
-			fmt.Fprintln(os.Stderr, "🌳 Aborted. Dirty worktree left in place; prune will not reclaim this slot. Use 'treehouse return --force' to clean and return it.")
+			fmt.Fprintf(os.Stderr, "🌳 Aborted. Dirty worktree left in place; prune will not reclaim this slot. Use 'treehouse return --force %s' to clean and return it.\n", quoteReturnPath(wtPath))
 			return nil
 		}
 		if errors.Is(err, errReturnAborted) {
@@ -95,6 +96,16 @@ func init() {
 	returnCmd.Flags().StringVar(&returnIfLeaseID, "if-lease-id", "", "Return only if the current lease has this identity")
 	returnCmd.Flags().StringVar(&returnIfLeaseHolder, "if-lease-holder", "", "Return only if the current lease has this holder")
 	rootCmd.AddCommand(returnCmd)
+}
+
+func quoteReturnPath(p string) string {
+	if p == "" {
+		return p
+	}
+	if strings.ContainsAny(p, " \t\"'") {
+		return `"` + strings.ReplaceAll(p, `"`, `\"`) + `"`
+	}
+	return p
 }
 
 func confirmWorktreeReturn(wtPath string) error {

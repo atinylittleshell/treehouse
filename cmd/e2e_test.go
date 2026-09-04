@@ -1236,6 +1236,9 @@ func TestReturnNonTTYDirtyExplainsUnreclaimableSlot(t *testing.T) {
 	if !strings.Contains(returnErr, "return --force") {
 		t.Fatalf("expected --force hint, got: %s", returnErr)
 	}
+	if !strings.Contains(returnErr, wtPath) {
+		t.Fatalf("expected --force hint to include worktree path %q, got: %s", wtPath, returnErr)
+	}
 
 	status := gitCmd(t, wtPath, "status", "--porcelain")
 	if status == "" {
