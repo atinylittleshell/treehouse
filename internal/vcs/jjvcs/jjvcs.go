@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/treehouse/internal/deadline"
+	"github.com/kunchenguid/treehouse/internal/process"
 )
 
 // Backend implements the vcs.Backend interface for jj repositories.
@@ -570,6 +571,23 @@ func runJJ(dir string, args ...string) (string, error) {
 	fullArgs := append([]string{"--color", "never"}, args...)
 	cmd := exec.CommandContext(ctx, "jj", fullArgs...)
 	cmd.WaitDelay = waitDelay
+	// Kill the whole subtree, not just git. Cancelling the context kills only
+	// the direct child, but jj shells out to git, which runs its network transports as separate
+	// processes (git-remote-http, ssh) that inherit the output pipes and keep
+	// the repository open. Descendants are enumerated here, BEFORE the parent
+	// dies, because once the command exits they are reparented to init and can no
+	// longer be reached by walking down from it.
+	//
+	// Deliberately not a process group: putting git in its own group would put
+	// it in the BACKGROUND group of the controlling terminal, and git's
+	// credential prompt and ssh's passphrase prompt both read /dev/tty. A
+	// background-group read from the controlling terminal raises SIGTTIN, whose
+	// default action stops the process - so an interactive user would get a
+	// stopped process instead of a prompt.
+	cmd.Cancel = func() error {
+		process.KillDescendants(int32(cmd.Process.Pid))
+		return cmd.Process.Kill()
+	}
 	if dir != "" {
 		cmd.Dir = dir
 	}

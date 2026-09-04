@@ -441,6 +441,10 @@ leaves the `treehouse` process running, and killing the `treehouse` process
 leaves its `git fetch` child reparented to init - so the wait has to be bounded
 by the process that owns it.
 
+When the bound fires, treehouse kills the whole subtree, not just the command:
+git runs its network transports as separate processes (`git-remote-http`, `ssh`)
+that would otherwise keep running and keep the repository open.
+
 ### Worktree root
 
 The worktree root can also be set without a config file, and the resolved value follows this precedence (highest first):

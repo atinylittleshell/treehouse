@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/treehouse/internal/deadline"
+	"github.com/kunchenguid/treehouse/internal/process"
 )
 
 // FindMainRepoRoot returns the main repository root for the current working
@@ -107,6 +108,13 @@ func getLocalDefaultBranch(mainRoot string) (string, error) {
 		return out, nil
 	}
 
+	// Every probe above went through runGit, so an expired deadline reaches
+	// here as "no branch found". Saying so beats the stock advice: telling
+	// someone whose command timed out to run 'git fetch' sends them at the
+	// wrong problem.
+	if deadline.Exceeded() {
+		return "", fmt.Errorf("cannot determine default branch: timed out; raise --timeout")
+	}
 	return "", fmt.Errorf("cannot determine default branch: try running 'git fetch' or ensure you are on a branch")
 }
 
@@ -605,6 +613,23 @@ func runGitRaw(dir string, args ...string) ([]byte, error) {
 
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.WaitDelay = waitDelay
+	// Kill the whole subtree, not just git. Cancelling the context kills only
+	// the direct child, but git runs its network transports as separate
+	// processes (git-remote-http, ssh) that inherit the output pipes and keep
+	// the repository open. Descendants are enumerated here, BEFORE the parent
+	// dies, because once git exits they are reparented to init and can no
+	// longer be reached by walking down from it.
+	//
+	// Deliberately not a process group: putting git in its own group would put
+	// it in the BACKGROUND group of the controlling terminal, and git's
+	// credential prompt and ssh's passphrase prompt both read /dev/tty. A
+	// background-group read from the controlling terminal raises SIGTTIN, whose
+	// default action stops the process - so an interactive user would get a
+	// stopped process instead of a prompt.
+	cmd.Cancel = func() error {
+		process.KillDescendants(int32(cmd.Process.Pid))
+		return cmd.Process.Kill()
+	}
 	if dir != "" {
 		cmd.Dir = dir
 	}

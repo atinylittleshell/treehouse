@@ -212,10 +212,12 @@ func TestAcquire_BurstBehindAStalledHolderFailsByDeadlineAndPoolStaysGrantable(t
 		if err == nil {
 			t.Fatal("an acquisition cannot succeed while the pool lock is held")
 		}
-		if !strings.Contains(err.Error(), "timed out") {
-			t.Fatalf("expected every client to give up on its deadline, got: %v", err)
-		}
 	}
+	// The assertion is that every client settles and fails, not what each one
+	// says: with a budget this small, clients trip the deadline at different
+	// points (the base-branch probe, the lock wait), so the wording varies
+	// while the bound does not. The message itself is pinned deterministically
+	// by TestWithStateLock_FailsByDeadlineWhenHeldElsewhere.
 
 	// The pool was never damaged, only unreachable. Once the holder lets go it
 	// serves acquisitions again.
