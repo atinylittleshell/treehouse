@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/BurntSushi/toml"
 	"github.com/kunchenguid/treehouse/internal/vcs"
@@ -26,8 +27,19 @@ type Config struct {
 	// from their main repository root. An unrecognized value is ignored
 	// (git stays the default) with a one-time stderr warning naming the
 	// value and its source.
-	VCS   string `toml:"vcs,omitempty"`
-	Hooks Hooks  `toml:"hooks,omitempty"`
+	VCS string `toml:"vcs,omitempty"`
+	// UniqueLeaf makes each new pool worktree's own directory name unique
+	// within the pool ("<repo>-<slot>") instead of the repository name every
+	// slot shares. Tooling that derives per-checkout identity from the working
+	// directory's last path segment -- test-database names, container names,
+	// cache keys -- otherwise reads every slot as the same checkout.
+	// Off (the default) keeps today's layout. Existing slots keep the path
+	// recorded in pool state, so turning this on never moves, renames, or
+	// invalidates a worktree that already exists.
+	// Overridden per invocation by `treehouse get --unique-leaf` and the
+	// TREEHOUSE_UNIQUE_LEAF environment variable.
+	UniqueLeaf bool  `toml:"unique_leaf,omitempty"`
+	Hooks      Hooks `toml:"hooks,omitempty"`
 }
 
 type Hooks struct {
@@ -39,6 +51,11 @@ type Hooks struct {
 // worktree root. It sits below the --root flag but above repo/user config in
 // the resolution precedence (see ResolveRoot).
 const RootEnvVar = "TREEHOUSE_ROOT"
+
+// UniqueLeafEnvVar is the environment variable that overrides the configured
+// unique_leaf setting. It sits below the --unique-leaf flag but above
+// repo/user config in the resolution precedence (see ResolveUniqueLeaf).
+const UniqueLeafEnvVar = "TREEHOUSE_UNIQUE_LEAF"
 
 func DefaultConfig() Config {
 	return Config{
@@ -61,6 +78,27 @@ func ResolveRoot(flagRoot string, cfg Config) string {
 		return env
 	}
 	return cfg.Root
+}
+
+// ResolveUniqueLeaf reports whether newly created worktrees get a leaf
+// directory unique within the pool, honoring the same override precedence as
+// ResolveRoot: an explicit flag, then the TREEHOUSE_UNIQUE_LEAF environment
+// variable, then unique_leaf from repo/user config, then off.
+//
+// A bool has no "empty" spelling the way a path does, so each layer reports
+// separately whether it was set at all: flagUniqueLeaf is nil unless the caller
+// typed --unique-leaf, and an unset or unparseable environment variable falls
+// through to config instead of forcing a value. That keeps --unique-leaf=false
+// and TREEHOUSE_UNIQUE_LEAF=0 able to turn the option back off for a single
+// invocation in a pool that enables it in config.
+func ResolveUniqueLeaf(flagUniqueLeaf *bool, cfg Config) bool {
+	if flagUniqueLeaf != nil {
+		return *flagUniqueLeaf
+	}
+	if env, err := strconv.ParseBool(os.Getenv(UniqueLeafEnvVar)); err == nil {
+		return env
+	}
+	return cfg.UniqueLeaf
 }
 
 func Load(repoRoot string) (Config, error) {

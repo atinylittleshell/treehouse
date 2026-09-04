@@ -227,12 +227,13 @@ func runTreehouseFromDir(t *testing.T, repoDir, workDir, homeDir string, extraEn
 // HOME/USERPROFILE to the test homeDir and suppressing update checks.
 func buildEnv(homeDir string, extra ...string) []string {
 	skip := map[string]bool{
-		"HOME":          true,
-		"USERPROFILE":   true,
-		"HOMEDRIVE":     true,
-		"HOMEPATH":      true,
-		"TREEHOUSE_DIR": true,
-		"TREEHOUSE_VCS": true,
+		"HOME":                  true,
+		"USERPROFILE":           true,
+		"HOMEDRIVE":             true,
+		"HOMEPATH":              true,
+		"TREEHOUSE_DIR":         true,
+		"TREEHOUSE_VCS":         true,
+		"TREEHOUSE_UNIQUE_LEAF": true,
 	}
 	for _, kv := range extra {
 		if k, _, ok := strings.Cut(kv, "="); ok {

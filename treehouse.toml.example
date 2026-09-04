@@ -24,6 +24,19 @@ max_trees = 16
 # Override per-command with the --base flag.
 # base_branch = "develop"
 
+# Optional unique worktree directory names.
+# Each pool slot normally lives in a directory named after the repository
+# (<pool>/<slot>/<repo>), so tooling that derives per-checkout identity from
+# the working directory's last path segment -- test-database names, container
+# names, cache keys -- reads every slot as the same checkout.
+# Set true to name new slots <repo>-<slot> instead.
+# Off (default) keeps the current layout; worktrees already in the pool keep
+# their paths either way, so turning this on never moves or renames one.
+# Override per-command with the --unique-leaf flag or the TREEHOUSE_UNIQUE_LEAF
+# env var (precedence: --unique-leaf > TREEHOUSE_UNIQUE_LEAF > this file
+# > user config > off).
+# unique_leaf = true
+
 # Version-control backend selection. Git is the default everywhere. Set
 # "jj" to opt in to the experimental Jujutsu backend for this repository
 # (or per-command with TREEHOUSE_VCS=jj). Pooled jj workspaces inherit this
