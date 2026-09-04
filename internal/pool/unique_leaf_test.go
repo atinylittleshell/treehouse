@@ -31,8 +31,12 @@ func TestAcquire_UniqueLeafNamesWorktreeAfterItsSlot(t *testing.T) {
 	if wtPath != want {
 		t.Errorf("worktree path = %s, want %s", wtPath, want)
 	}
-	if got := gitOut(t, wtPath, "rev-parse", "--show-toplevel"); got != wtPath {
-		t.Errorf("git toplevel = %s, want %s", got, wtPath)
+	// git prints the toplevel with forward slashes on every platform, so
+	// normalize it the way the rest of the suite does before comparing it to a
+	// path built with filepath.Join.
+	toplevel := filepath.Clean(filepath.FromSlash(gitOut(t, wtPath, "rev-parse", "--show-toplevel")))
+	if toplevel != filepath.Clean(wtPath) {
+		t.Errorf("git toplevel = %s, want %s", toplevel, filepath.Clean(wtPath))
 	}
 }
 
