@@ -666,6 +666,53 @@ func TestAtomicReplaceRunningWindows(t *testing.T) {
 	}
 }
 
+func TestReplaceRunningWindowsStaleOld(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows running-image replacement")
+	}
+
+	dir := t.TempDir()
+	targetPath := filepath.Join(dir, "hold.exe")
+	staleOld := targetPath + ".old"
+	holdSrc := filepath.Join("testdata", "holdopen", "main.go")
+	build := exec.Command("go", "build", "-o", staleOld, holdSrc)
+	out, err := build.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go build holdopen: %v\n%s", err, out)
+	}
+
+	cmd := exec.Command(staleOld)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start leftover .old: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+	time.Sleep(200 * time.Millisecond)
+
+	if err := os.WriteFile(targetPath, []byte("current-bytes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tmpPath := filepath.Join(dir, "new.bin")
+	newContent := []byte("replacement-bytes")
+	if err := os.WriteFile(tmpPath, newContent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := replaceRunningWindows(targetPath, tmpPath); err != nil {
+		t.Fatalf("replaceRunningWindows with mapped leftover .old: %v", err)
+	}
+
+	got, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(newContent) {
+		t.Errorf("replaced = %q, want %q", string(got), string(newContent))
+	}
+}
+
 func TestRequireHTTPS(t *testing.T) {
 	if err := requireHTTPS("https://example.com/file"); err != nil {
 		t.Errorf("expected no error for HTTPS URL, got: %v", err)
