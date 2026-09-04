@@ -2,11 +2,15 @@ package gitvcs
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/kunchenguid/treehouse/internal/deadline"
 )
 
 // FindMainRepoRoot returns the main repository root for the current working
@@ -578,13 +582,26 @@ func runGit(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// runGitRaw runs one git command bounded by the process deadline.
+//
+// Every network-facing git operation treehouse runs - `fetch` above all - can
+// block indefinitely against an origin that accepts the connection and then
+// says nothing. Binding the command to the deadline context makes the wait
+// interruptible AND kills the git child when it expires; without the context,
+// killing treehouse leaves `git fetch` reparented to init and still running.
 func runGitRaw(dir string, args ...string) ([]byte, error) {
-	cmd := exec.Command("git", args...)
+	ctx, cancel := deadline.Context()
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
 	out, err := cmd.Output()
 	if err != nil {
+		if ctxErr := ctx.Err(); errors.Is(ctxErr, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("git %s: timed out; raise --timeout or check the remote", strings.Join(args, " "))
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return nil, fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(exitErr.Stderr)))
 		}

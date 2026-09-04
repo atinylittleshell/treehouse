@@ -414,6 +414,33 @@ jj-backend notes:
 - The default branch resolves to the `main`/`master`/`trunk` bookmark, preferring origin.
 - A pooled jj workspace whose backing repository was deleted is classified as an orphan just like a git worktree: `prune` reports it, and `prune --prune-orphans --yes` reclaims it.
 
+### Command timeout
+
+Every treehouse command bounds how long it will block: waiting for the pool's
+state lock, and waiting on any `git`/`jj` subprocess it runs. The bound defaults
+to **10 minutes**, far above any healthy operation, so it only fires on a real
+stall - an `origin` that accepts the connection and then never answers, or
+another treehouse command that stopped making progress while holding the lock.
+
+```sh
+treehouse get --lease --timeout 60s   # this command gives up after a minute
+export TREEHOUSE_TIMEOUT=60s          # same bound for a whole shell session
+treehouse get --timeout 0             # wait forever (the pre-2.4 behavior)
+```
+
+Precedence is `--timeout`, then `TREEHOUSE_TIMEOUT`, then the 10-minute default.
+`0` (from either) waits forever.
+
+The bound covers acquisition work only. It deliberately does **not** apply to the
+subshell `treehouse get` opens or to lifecycle hooks: both are meant to run for
+as long as you want, and the budget is granted afresh for the return that
+follows a subshell.
+
+A caller's own timeout is not a substitute for this one. Killing the caller
+leaves the `treehouse` process running, and killing the `treehouse` process
+leaves its `git fetch` child reparented to init - so the wait has to be bounded
+by the process that owns it.
+
 ### Worktree root
 
 The worktree root can also be set without a config file, and the resolved value follows this precedence (highest first):

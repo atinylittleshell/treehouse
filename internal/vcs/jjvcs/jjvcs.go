@@ -26,12 +26,16 @@
 package jjvcs
 
 import (
+	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/kunchenguid/treehouse/internal/deadline"
 )
 
 // Backend implements the vcs.Backend interface for jj repositories.
@@ -546,14 +550,23 @@ func revsetNonEmpty(dir, revset string) bool {
 	return err == nil && out != ""
 }
 
+// runJJ runs one jj command bounded by the process deadline, for the same
+// reason runGitRaw is: jj shells out to git for network transport, so a jj
+// fetch against a silent origin hangs exactly as a git fetch does.
 func runJJ(dir string, args ...string) (string, error) {
+	ctx, cancel := deadline.Context()
+	defer cancel()
+
 	fullArgs := append([]string{"--color", "never"}, args...)
-	cmd := exec.Command("jj", fullArgs...)
+	cmd := exec.CommandContext(ctx, "jj", fullArgs...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
 	out, err := cmd.Output()
 	if err != nil {
+		if ctxErr := ctx.Err(); errors.Is(ctxErr, context.DeadlineExceeded) {
+			return "", fmt.Errorf("jj %s: timed out; raise --timeout or check the remote", strings.Join(args, " "))
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return "", fmt.Errorf("jj %s: %s", strings.Join(args, " "), strings.TrimSpace(string(exitErr.Stderr)))
 		}

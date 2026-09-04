@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kunchenguid/treehouse/internal/config"
+	"github.com/kunchenguid/treehouse/internal/deadline"
 	"github.com/kunchenguid/treehouse/internal/pool"
 	"github.com/kunchenguid/treehouse/internal/process"
 	"github.com/kunchenguid/treehouse/internal/shell"
@@ -109,6 +110,12 @@ func getRunE(cmd *cobra.Command, args []string) error {
 		"TREEHOUSE_DIR=" + wtPath,
 	}
 	_, err = shell.Spawn(wtPath, env)
+
+	// The subshell is deliberately unbounded and routinely runs for hours, so
+	// the acquisition budget is long gone by the time it exits. Grant the
+	// return path a fresh one; without this every long session would fail its
+	// own cleanup on a deadline it was never meant to be judged against.
+	deadline.Restart()
 
 	// Subshell exited — handle return. A markerless slot must never be
 	// detached: dispatch on such a path falls back to the configured backend,

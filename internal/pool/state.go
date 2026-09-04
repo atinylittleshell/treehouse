@@ -5,9 +5,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
+
+	"github.com/kunchenguid/treehouse/internal/deadline"
 )
 
 type WorktreeEntry struct {
@@ -228,6 +233,24 @@ func createTempStateFile(dir, base string, perm os.FileMode) (*os.File, string, 
 	return nil, "", fmt.Errorf("creating temporary state file: too many name collisions")
 }
 
+// lockPollInterval is how often a blocked caller retries the pool lock. It
+// trades a negligible amount of wakeup work for a wait that the process
+// deadline can actually interrupt: a blocking flock cannot be cancelled.
+const lockPollInterval = 50 * time.Millisecond
+
+// lockNoticeAfter is how long a caller waits before it says out loud that it is
+// queued, and on whom. Without this a contended pool is indistinguishable from
+// a wedged one, which is exactly how a stalled lock holder stayed invisible in
+// the field for days.
+const lockNoticeAfter = 10 * time.Second
+
+// WithStateLock runs fn holding the pool's exclusive state lock.
+//
+// The wait for the lock is bounded by the process deadline (see the deadline
+// package). A caller that cannot take the lock in time fails with an error
+// naming the lock and its holder rather than blocking forever behind a stalled
+// holder. With no deadline set the wait is unbounded, as it always was, but it
+// still reports who it is waiting on.
 func WithStateLock(poolDir string, fn func() error) error {
 	if err := os.MkdirAll(poolDir, 0755); err != nil {
 		return err
@@ -240,10 +263,69 @@ func WithStateLock(poolDir string, fn func() error) error {
 	}
 	defer f.Close()
 
-	if err := lockFile(f); err != nil {
+	if err := waitForStateLock(f, lockPath); err != nil {
 		return err
 	}
 	defer unlockFile(f)
 
+	// Record the holder so a queued caller can name who it is waiting on.
+	// Written under the lock, and only ever read as a diagnostic.
+	recordLockHolder(f)
+
 	return fn()
+}
+
+func waitForStateLock(f *os.File, lockPath string) error {
+	started := time.Now()
+	noticed := false
+	for {
+		locked, err := tryLockFile(f)
+		if err != nil {
+			return err
+		}
+		if locked {
+			return nil
+		}
+		if deadline.Exceeded() {
+			return fmt.Errorf("timed out after %s waiting for the pool lock %s%s; another treehouse command is holding it. Wait for it to finish, or raise --timeout",
+				time.Since(started).Round(time.Millisecond), lockPath, describeLockHolder(lockPath))
+		}
+		if !noticed && time.Since(started) >= lockNoticeAfter {
+			noticed = true
+			fmt.Fprintf(os.Stderr, "🌳 Waiting for the pool lock %s%s...\n", lockPath, describeLockHolder(lockPath))
+		}
+		time.Sleep(lockPollInterval)
+	}
+}
+
+// recordLockHolder stamps the calling process into the lock file. Best effort:
+// the pid is a diagnostic, never a correctness input, so a failure to write it
+// must not fail the operation that holds the lock. Only the lock owner writes
+// it, so this never contends with Windows byte-range locking; a waiter that
+// cannot read it there simply gets no holder in its message.
+func recordLockHolder(f *os.File) {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return
+	}
+	if err := f.Truncate(0); err != nil {
+		return
+	}
+	fmt.Fprintf(f, "%d\n", os.Getpid())
+}
+
+// describeLockHolder renders the recorded holder as a phrase to append to a
+// message, or the empty string when there is nothing trustworthy to report.
+// It reads the last pid stamped into the lock file, which is the current holder
+// whenever a treehouse process holds it, so the phrase says "last held" rather
+// than claiming more than the file can prove.
+func describeLockHolder(lockPath string) string {
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		return ""
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 || pid == os.Getpid() {
+		return ""
+	}
+	return fmt.Sprintf(" (last held by pid %d)", pid)
 }
