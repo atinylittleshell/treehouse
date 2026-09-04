@@ -1,7 +1,10 @@
 package pool
 
 import (
+	"fmt"
+	"io"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -9,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/treehouse/internal/deadline"
+	"github.com/kunchenguid/treehouse/internal/hooks"
 )
 
 // holdStateLock takes the pool lock through a second open file description and
@@ -224,4 +228,38 @@ func TestAcquire_BurstBehindAStalledHolderFailsByDeadlineAndPoolStaysGrantable(t
 	if wtPath == "" {
 		t.Fatal("expected a worktree path")
 	}
+}
+
+// A lifecycle hook is user code with no bound on how long it runs. Prune and
+// destroy reserve under the lock, run pre_destroy hooks, then take the lock
+// again to remove. If the hook's runtime were charged to the command budget, a
+// hook slower than the timeout would leave that second phase already past the
+// deadline - failing a healthy cleanup and stranding the reservations the hook
+// was run to protect. hooks.Run grants a fresh budget on the way out.
+func TestHooksDoNotSpendTheCommandBudget(t *testing.T) {
+	poolDir := t.TempDir()
+
+	deadline.Set(300 * time.Millisecond)
+	t.Cleanup(func() { deadline.Set(0) })
+
+	// A hook that outlives the budget several times over.
+	hooks.Run([]string{sleepCommand(t, 900*time.Millisecond)}, poolDir, io.Discard, io.Discard)
+
+	if deadline.Exceeded() {
+		t.Fatal("a hook must not spend the budget of the phase that follows it")
+	}
+	if err := WithStateLock(poolDir, func() error { return nil }); err != nil {
+		t.Fatalf("the phase after a slow hook must still be able to work: %v", err)
+	}
+}
+
+// sleepCommand renders a shell command that sleeps for d, in the shell
+// hooks.Run uses on this platform.
+func sleepCommand(t *testing.T, d time.Duration) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		// ping is the portable "sleep" available on every Windows image.
+		return fmt.Sprintf("ping -n %d 127.0.0.1 >NUL", int(d.Seconds())+2)
+	}
+	return fmt.Sprintf("sleep %.2f", d.Seconds())
 }

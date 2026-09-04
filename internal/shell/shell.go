@@ -5,9 +5,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+
+	"github.com/kunchenguid/treehouse/internal/deadline"
 )
 
+// Spawn opens an interactive subshell in dir and waits for the user to leave it.
+//
+// A session runs for as long as the user wants, so the wait is not charged to
+// the caller's deadline: Spawn grants a fresh budget on the way out. Without
+// that, the return path after a long session would fail on a deadline it was
+// never meant to be judged against.
 func Spawn(dir string, env []string) (int, error) {
+	defer deadline.Restart()
+
 	shellPath := os.Getenv("SHELL")
 	hasUserShell := shellPath != ""
 	if shellPath == "" {

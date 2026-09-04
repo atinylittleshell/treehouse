@@ -16,9 +16,15 @@
 // giving every operation and every caller a context parameter would be a large
 // diff whose only consumer is these three call sites.
 //
-// The deadline covers acquisition work only. It is deliberately not consulted
-// by the interactive subshell `treehouse get` opens, nor by user-configured
-// lifecycle hooks: both are meant to run for as long as the user wants.
+// The budget is per PHASE of work, not per process. Three primitives block for
+// an arbitrarily long time on something outside treehouse's control - the
+// interactive subshell (shell.Spawn), user-configured lifecycle hooks
+// (hooks.Run), and a yes/no prompt to a person (ui.Confirm) - and none of them
+// is bounded, on purpose. Each one calls Restart on the way out, so the time it
+// spent is not charged to whatever runs next. That rule lives in those three
+// functions rather than at their call sites: a caller can forget, and forgetting
+// means a healthy operation fails on an expired deadline. A new unbounded
+// primitive belongs on that list.
 package deadline
 
 import (
