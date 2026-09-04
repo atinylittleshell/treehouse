@@ -76,7 +76,7 @@ var returnCmd = &cobra.Command{
 			}
 		}
 		if errors.Is(err, errReturnAbortedNonTTY) {
-			fmt.Fprintf(os.Stderr, "🌳 Aborted. Dirty worktree left in place; prune will not reclaim this slot. Use 'treehouse return --force %s' to clean and return it.\n", quoteReturnPath(wtPath))
+			fmt.Fprintf(os.Stderr, "🌳 Aborted. Dirty worktree left in place; prune will not reclaim this slot. Use treehouse return --force %s to clean and return it.\n", quoteReturnPath(wtPath))
 			return nil
 		}
 		if errors.Is(err, errReturnAborted) {

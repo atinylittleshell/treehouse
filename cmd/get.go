@@ -126,7 +126,7 @@ func getRunE(cmd *cobra.Command, args []string) error {
 
 		ok, promptErr := ui.Confirm("Clean worktree and return to pool?", true)
 		if promptErr != nil || !ok {
-			fmt.Fprintf(os.Stderr, "🌳 Worktree left dirty. Use 'treehouse return --force %s' to clean it later.\n", quoteReturnPath(wtPath))
+			fmt.Fprintf(os.Stderr, "🌳 Worktree left dirty. Use treehouse return --force %s to clean it later.\n", quoteReturnPath(wtPath))
 			return nil
 		}
 	}
