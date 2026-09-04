@@ -45,7 +45,7 @@ func TestQuoteWindowsReturnPathDoublesInternalQuotes(t *testing.T) {
 	}
 }
 
-func TestQuoteWindowsReturnPathDoublesPercentSigns(t *testing.T) {
+func TestQuoteWindowsReturnPathPreservesPercentSignsForPaste(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -53,8 +53,10 @@ func TestQuoteWindowsReturnPathDoublesPercentSigns(t *testing.T) {
 		path string
 		want string
 	}{
-		{name: "env-like component", path: `C:\pool\%TARGET%\repo`, want: `"C:\pool\%%TARGET%%\repo"`},
-		{name: "percent and quotes", path: `C:\pool\%A%\say "hi"`, want: `"C:\pool\%%A%%\say ""hi"""`},
+		// Interactive cmd paste must keep the real path; %% would look up a
+		// different worktree and leave the dirty slot unreclaimed.
+		{name: "env-like component", path: `C:\pool\%TARGET%\repo`, want: `"C:\pool\%TARGET%\repo"`},
+		{name: "percent and quotes", path: `C:\pool\%A%\say "hi"`, want: `"C:\pool\%A%\say ""hi"""`},
 		{name: "plain", path: `C:\pool\1\repo`, want: `"C:\pool\1\repo"`},
 	}
 	for _, tc := range cases {
@@ -62,6 +64,9 @@ func TestQuoteWindowsReturnPathDoublesPercentSigns(t *testing.T) {
 			got := quoteWindowsReturnPath(tc.path)
 			if got != tc.want {
 				t.Fatalf("quoteWindowsReturnPath(%q) = %q, want %q", tc.path, got, tc.want)
+			}
+			if strings.Contains(got, "%%") {
+				t.Fatalf("quoteWindowsReturnPath must not batch-escape %% for paste, got %q", got)
 			}
 		})
 	}
