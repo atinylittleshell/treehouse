@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -98,14 +99,27 @@ func init() {
 	rootCmd.AddCommand(returnCmd)
 }
 
+// quoteReturnPath makes a worktree path safe to paste after
+// `treehouse return --force`. Unquoted or double-quoted paths can still
+// expand $(), backticks, or command separators in POSIX shells.
 func quoteReturnPath(p string) string {
 	if p == "" {
 		return p
 	}
-	if strings.ContainsAny(p, " \t\"'") {
-		return `"` + strings.ReplaceAll(p, `"`, `\"`) + `"`
+	if runtime.GOOS == "windows" {
+		return quoteWindowsReturnPath(p)
 	}
-	return p
+	return quotePOSIXReturnPath(p)
+}
+
+func quotePOSIXReturnPath(p string) string {
+	return "'" + strings.ReplaceAll(p, "'", `'\''`) + "'"
+}
+
+func quoteWindowsReturnPath(p string) string {
+	// cmd.exe is Treehouse's Windows shell. Double quotes group the path;
+	// doubled quotes are the cmd escape. $() is not expanded there.
+	return `"` + strings.ReplaceAll(p, `"`, `""`) + `"`
 }
 
 func confirmWorktreeReturn(wtPath string) error {
