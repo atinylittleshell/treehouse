@@ -117,9 +117,13 @@ func quotePOSIXReturnPath(p string) string {
 }
 
 func quoteWindowsReturnPath(p string) string {
-	// cmd.exe is Treehouse's Windows shell. Double quotes group the path;
-	// doubled quotes are the cmd escape. $() is not expanded there.
-	return `"` + strings.ReplaceAll(p, `"`, `""`) + `"`
+	// cmd.exe is Treehouse's Windows shell. Double quotes group the path and
+	// neutralize $(), backticks, and command separators. Doubled quotes are
+	// the cmd escape for embedded ". Percent signs still expand inside
+	// double quotes, so double them to keep a literal %NAME% component.
+	p = strings.ReplaceAll(p, `"`, `""`)
+	p = strings.ReplaceAll(p, `%`, `%%`)
+	return `"` + p + `"`
 }
 
 func confirmWorktreeReturn(wtPath string) error {

@@ -45,6 +45,28 @@ func TestQuoteWindowsReturnPathDoublesInternalQuotes(t *testing.T) {
 	}
 }
 
+func TestQuoteWindowsReturnPathDoublesPercentSigns(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "env-like component", path: `C:\pool\%TARGET%\repo`, want: `"C:\pool\%%TARGET%%\repo"`},
+		{name: "percent and quotes", path: `C:\pool\%A%\say "hi"`, want: `"C:\pool\%%A%%\say ""hi"""`},
+		{name: "plain", path: `C:\pool\1\repo`, want: `"C:\pool\1\repo"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := quoteWindowsReturnPath(tc.path)
+			if got != tc.want {
+				t.Fatalf("quoteWindowsReturnPath(%q) = %q, want %q", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestQuoteReturnPathEmpty(t *testing.T) {
 	t.Parallel()
 
