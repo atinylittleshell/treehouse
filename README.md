@@ -206,7 +206,7 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
 
 ### Seeding gitignored files
 
-Commit a `.worktreeinclude` file to seed selected gitignored files from the main checkout into each acquired Git worktree or jj workspace. This is useful for local configuration or generated files that every worktree needs but Git should not track.
+Commit a `.worktreeinclude` file to seed selected gitignored files from the main checkout into each acquired Git worktree or jj workspace. This is useful for local configuration or generated files that every worktree needs but Git should not track. Only the committed file at the worktree's HEAD is used; a dirty or untracked `.worktreeinclude` in the main checkout is ignored, and a missing committed file is a no-op.
 
 `.worktreeinclude` uses `.gitignore` pattern syntax. A file must be ignored by the repository and selected by `.worktreeinclude`; tracked files and unignored untracked files are never copied. Use `!` to exclude a broader match:
 

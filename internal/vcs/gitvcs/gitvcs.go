@@ -219,7 +219,9 @@ func PruneWorktrees(repoRoot string) error {
 	return err
 }
 
-// SeedWorktree copies ignored files selected by .worktreeinclude.
+// SeedWorktree copies ignored files selected by the committed .worktreeinclude
+// at the destination worktree's HEAD. A dirty or untracked working-tree copy
+// in the source checkout is ignored; a missing committed file is a no-op.
 func SeedWorktree(repoRoot, worktreePath string) error {
 	_, err := SeedWorktreeWithInventory(repoRoot, worktreePath)
 	return err
@@ -228,7 +230,7 @@ func SeedWorktree(repoRoot, worktreePath string) error {
 // SeedWorktreeWithInventory returns the paths it copied so the pool can remove
 // them later without trusting mutable content in the acquired worktree.
 func SeedWorktreeWithInventory(repoRoot, worktreePath string) ([]string, error) {
-	return seedWorktreeWithInventory(repoRoot, worktreePath, nil, nil)
+	return seedWorktreeWithInventory(repoRoot, worktreePath, nil, nil, "")
 }
 
 func SeedWorktreeWithInventoryFromGitStore(repoRoot, worktreePath, gitDir, ref string) ([]string, error) {
@@ -240,11 +242,11 @@ func SeedWorktreeWithInventoryFromGitStore(repoRoot, worktreePath, gitDir, ref s
 	if trackedOutput == nil {
 		trackedOutput = []byte{}
 	}
-	return seedWorktreeWithInventory(repoRoot, worktreePath, env, trackedOutput)
+	return seedWorktreeWithInventory(repoRoot, worktreePath, env, trackedOutput, ref)
 }
 
-func seedWorktreeWithInventory(repoRoot, worktreePath string, gitEnv []string, trackedOutput []byte) ([]string, error) {
-	selected, err := selectedSeedPathsEnv(repoRoot, gitEnv)
+func seedWorktreeWithInventory(repoRoot, worktreePath string, gitEnv []string, trackedOutput []byte, manifestRef string) ([]string, error) {
+	selected, err := selectedSeedPathsEnv(repoRoot, worktreePath, gitEnv, manifestRef)
 	if err != nil || len(selected) == 0 {
 		return nil, err
 	}
@@ -401,18 +403,50 @@ func worktreeCaseInsensitive(worktreePath string) (bool, error) {
 	return os.SameFile(marker, alias), nil
 }
 
-func selectedSeedPaths(repoRoot string) ([]byte, error) {
-	return selectedSeedPathsEnv(repoRoot, nil)
-}
+const worktreeIncludeName = ".worktreeinclude"
 
-func selectedSeedPathsEnv(repoRoot string, gitEnv []string) ([]byte, error) {
-	manifest, err := os.ReadFile(filepath.Join(repoRoot, ".worktreeinclude"))
-	if os.IsNotExist(err) {
-		return nil, nil
-	} else if err != nil {
+func selectedSeedPathsEnv(repoRoot, worktreePath string, gitEnv []string, manifestRef string) ([]byte, error) {
+	manifest, err := committedWorktreeInclude(repoRoot, worktreePath, gitEnv, manifestRef)
+	if err != nil || len(manifest) == 0 {
 		return nil, err
 	}
 	return selectedSeedPathsWithManifestEnv(repoRoot, manifest, gitEnv)
+}
+
+// committedWorktreeInclude returns the blob of .worktreeinclude at the commit
+// the destination worktree was cut from. A dirty or untracked working-tree
+// file in repoRoot is never trusted: a missing committed file is a no-op.
+func committedWorktreeInclude(repoRoot, worktreePath string, gitEnv []string, ref string) ([]byte, error) {
+	dir := repoRoot
+	if ref == "" {
+		ref = "HEAD"
+		if worktreePath != "" {
+			dir = worktreePath
+			gitEnv = nil
+		}
+	}
+	listed, err := gitOutputEnv(dir, gitEnv, nil, "ls-tree", "-z", "--name-only", "--full-tree", ref, "--", worktreeIncludeName)
+	if err != nil {
+		return nil, err
+	}
+	found := false
+	for _, name := range bytes.Split(bytes.TrimSuffix(listed, []byte{0}), []byte{0}) {
+		if string(name) == worktreeIncludeName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, nil
+	}
+	kind, err := gitOutputEnv(dir, gitEnv, nil, "cat-file", "-t", ref+":"+worktreeIncludeName)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(string(kind)) != "blob" {
+		return nil, fmt.Errorf("committed %s is not a file", worktreeIncludeName)
+	}
+	return gitOutputEnv(dir, gitEnv, nil, "cat-file", "blob", ref+":"+worktreeIncludeName)
 }
 
 func selectedSeedPathsWithManifest(repoRoot string, manifest []byte) ([]byte, error) {

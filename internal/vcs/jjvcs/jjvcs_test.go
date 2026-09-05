@@ -202,6 +202,50 @@ func TestSeedWorktreeCopiesIgnoredManifestSelection(t *testing.T) {
 	}
 }
 
+func TestSeedWorktreeIgnoresUntrackedManifest(t *testing.T) {
+	requireJJ(t)
+	repoDir := newLocalRepo(t)
+	writeFile(t, filepath.Join(repoDir, ".gitignore"), "*.env\n")
+	writeFile(t, filepath.Join(repoDir, "secret.env"), "secret\n")
+	mustJJ(t, repoDir, "commit", "-m", "no manifest")
+	writeFile(t, filepath.Join(repoDir, ".worktreeinclude"), "secret.env\n")
+	wtPath := addWorkspace(t, repoDir)
+
+	seeded, err := New().SeedWorktree(repoDir, wtPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seeded) != 0 {
+		t.Fatalf("untracked .worktreeinclude selected seeds %v", seeded)
+	}
+	if _, err := os.Stat(filepath.Join(wtPath, "secret.env")); !os.IsNotExist(err) {
+		t.Fatal("untracked .worktreeinclude selected a seed")
+	}
+}
+
+func TestSeedWorktreeIgnoresDirtyCommittedManifest(t *testing.T) {
+	requireJJ(t)
+	repoDir := newLocalRepo(t)
+	writeFile(t, filepath.Join(repoDir, ".gitignore"), "*.env\n")
+	writeFile(t, filepath.Join(repoDir, ".worktreeinclude"), "selected.env\n")
+	writeFile(t, filepath.Join(repoDir, "selected.env"), "selected\n")
+	writeFile(t, filepath.Join(repoDir, "extra.env"), "extra\n")
+	mustJJ(t, repoDir, "commit", "-m", "add seed manifest")
+	writeFile(t, filepath.Join(repoDir, ".worktreeinclude"), "selected.env\nextra.env\n")
+	wtPath := addWorkspace(t, repoDir)
+
+	seeded, err := New().SeedWorktree(repoDir, wtPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seeded) != 1 || seeded[0] != "selected.env" {
+		t.Fatalf("seeded paths = %v, want [selected.env]", seeded)
+	}
+	if _, err := os.Stat(filepath.Join(wtPath, "extra.env")); !os.IsNotExist(err) {
+		t.Fatal("dirty .worktreeinclude selected an extra seed")
+	}
+}
+
 func TestSeedWorktreePreservesInventoryWhenAuthenticationFails(t *testing.T) {
 	requireJJ(t)
 	repoDir := newLocalRepo(t)

@@ -219,6 +219,59 @@ func TestAcquire_SeedsWorktreeIncludeOnCreateAndReuse(t *testing.T) {
 	assertFileContents(t, filepath.Join(reused, ".env"), "second\n")
 }
 
+func TestAcquire_IgnoresDirtyAndUntrackedWorktreeInclude(t *testing.T) {
+	repoDir, poolDir := setupLocalRepo(t)
+	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte("*.env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "secret.env"), []byte("secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", ".gitignore")
+	runGit(t, repoDir, "commit", "-m", "no manifest")
+
+	if err := os.WriteFile(filepath.Join(repoDir, ".worktreeinclude"), []byte("secret.env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wtPath, err := Acquire(repoDir, poolDir, 2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(wtPath, "secret.env")); !os.IsNotExist(err) {
+		t.Fatal("untracked .worktreeinclude selected a seed")
+	}
+	if err := Release(poolDir, wtPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repoDir, ".worktreeinclude"), []byte("selected.env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "selected.env"), []byte("selected\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "extra.env"), []byte("extra\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", ".worktreeinclude")
+	runGit(t, repoDir, "commit", "-m", "committed manifest")
+	if err := os.WriteFile(filepath.Join(repoDir, ".worktreeinclude"), []byte("selected.env\nextra.env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reused, err := Acquire(repoDir, poolDir, 2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileContents(t, filepath.Join(reused, "selected.env"), "selected\n")
+	if _, err := os.Stat(filepath.Join(reused, "extra.env")); !os.IsNotExist(err) {
+		t.Fatal("dirty .worktreeinclude selected an extra seed")
+	}
+	if _, err := os.Stat(filepath.Join(reused, "secret.env")); !os.IsNotExist(err) {
+		t.Fatal("untracked extra pattern leaked into a later acquire")
+	}
+}
+
 func TestAcquire_RemovesObsoleteSeedOnReuse(t *testing.T) {
 	repoDir, poolDir := setupLocalRepo(t)
 	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte("*.env\n"), 0o644); err != nil {

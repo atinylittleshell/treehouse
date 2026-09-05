@@ -1272,6 +1272,44 @@ func TestOpenRootUnchangedRejectsSymlinkToOriginalDirectory(t *testing.T) {
 	}
 }
 
+func TestSeedWorktreeIgnoresUntrackedManifest(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "repo")
+	worktree := filepath.Join(base, "worktree")
+	mustGit(t, "", "init", "--initial-branch=main", repo)
+	mustGit(t, repo, "config", "user.email", "test@test.com")
+	mustGit(t, repo, "config", "user.name", "Test")
+	writeTestFile(t, repo, ".gitignore", "*.env\n")
+	mustGit(t, repo, "add", "-f", ".gitignore")
+	mustGit(t, repo, "commit", "-m", "no manifest")
+	mustGit(t, repo, "worktree", "add", "--detach", worktree)
+
+	writeTestFile(t, repo, ".worktreeinclude", "secret.env\n")
+	writeTestFile(t, repo, "secret.env", "secret\n")
+
+	if err := SeedWorktree(repo, worktree); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(worktree, "secret.env")); !os.IsNotExist(err) {
+		t.Fatal("untracked .worktreeinclude selected a seed")
+	}
+}
+
+func TestSeedWorktreeIgnoresDirtyCommittedManifest(t *testing.T) {
+	repo, worktree := setupSeedWorktree(t, "selected.env\n")
+	writeTestFile(t, repo, "selected.env", "selected\n")
+	writeTestFile(t, repo, "extra.env", "extra\n")
+	writeTestFile(t, repo, ".worktreeinclude", "selected.env\nextra.env\n")
+
+	if err := SeedWorktree(repo, worktree); err != nil {
+		t.Fatal(err)
+	}
+	assertTestFile(t, worktree, "selected.env", "selected\n")
+	if _, err := os.Stat(filepath.Join(worktree, "extra.env")); !os.IsNotExist(err) {
+		t.Fatal("dirty .worktreeinclude selected an extra seed")
+	}
+}
+
 func setupSeedWorktree(t *testing.T, manifest string) (string, string) {
 	t.Helper()
 	base := t.TempDir()
