@@ -839,9 +839,11 @@ func TestLeaseExistingProtectsUnleasedWorktreeInPlace(t *testing.T) {
 	}
 }
 
-// TestLeaseJSONReportsResolvedBaseBranch pins LeaseInfo.BaseBranch's documented
-// contract - always populated, matching get --lease --json - for a slot that
-// recorded no explicit base.
+// TestLeaseJSONReportsResolvedBaseBranch pins the resolved-base case of
+// LeaseInfo.BaseBranch on a slot that recorded no explicit base: a git slot
+// whose own backend answers "main". The field is best-effort on this path, so
+// an empty value where the slot is markerless or its backend cannot resolve a
+// default is the documented contract, not a regression.
 func TestLeaseJSONReportsResolvedBaseBranch(t *testing.T) {
 	repoDir, homeDir := setupTestRepo(t)
 	env := []string{"SHELL=" + exitShellBin}

@@ -176,10 +176,13 @@ func LeaseExisting(poolDir, name, holder string) (LeaseInfo, error) {
 			// empty base rather than refusing to protect the home. Dispatch is
 			// on the slot's own marker, like every other per-worktree fact, so
 			// a slot of the other flavor is never answered by the repository's
-			// configured backend. The persisted field still records only an
-			// explicit base, so an inferred slot stays inferred.
+			// configured backend, and a markerless slot is left empty rather
+			// than read through the fallback, which in an in-project pool would
+			// answer with the default branch of the repository ENCLOSING the
+			// pool. The persisted field still records only an explicit base, so
+			// an inferred slot stays inferred.
 			base := wt.BaseBranch
-			if base == "" {
+			if base == "" && vcs.WorktreeBackendName(wt.Path) != "" {
 				if resolved, resolveErr := vcs.DefaultBranchForWorktree(wt.Path); resolveErr == nil {
 					base = resolved
 				}
@@ -700,13 +703,21 @@ func ownerAlive(wt WorktreeEntry) bool {
 }
 
 // checkOwnedByCaller reports whether wt still carries the reservation this very
-// process took, naming which of the three distinct failures happened: the slot
-// was already released (a `treehouse return` run from inside the subshell
-// leaves it free, not taken by anyone), it now carries a different reservation,
-// or this process's own identity could not be read to compare against. Both
-// owner fields are compared because a PID alone can be reused by an unrelated
-// process whose reservation must not be mistaken for ours.
+// process took, naming which of the four distinct failures happened: the slot
+// is now durably leased (markAcquired's lease path zeroes the owner fields, so
+// this must be tested BEFORE an empty OwnerPID or a protected home reads as
+// discarded), it was already released (a `treehouse return` run from inside the
+// subshell leaves it free, not taken by anyone), it now carries a different
+// reservation, or this process's own identity could not be read to compare
+// against. Both owner fields are compared because a PID alone can be reused by
+// an unrelated process whose reservation must not be mistaken for ours.
 func checkOwnedByCaller(wt WorktreeEntry) error {
+	if wt.Leased {
+		if wt.LeaseHolder != "" {
+			return fmt.Errorf("%w: it is now durably leased (holder: %q)", ErrOwnerPreconditionFailed, wt.LeaseHolder)
+		}
+		return fmt.Errorf("%w: it is now durably leased", ErrOwnerPreconditionFailed)
+	}
 	if wt.OwnerPID == 0 {
 		return fmt.Errorf("%w: it was already released", ErrOwnerPreconditionFailed)
 	}
