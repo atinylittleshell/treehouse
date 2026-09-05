@@ -126,6 +126,49 @@ func AcquireLeaseInfoWithOptions(repoRoot, poolDir string, poolSize int, postCre
 	})
 }
 
+// LeaseExisting marks a worktree already registered in the pool as durably
+// leased, state-only: no reset, fetch, clean, or checkout ever touches the
+// worktree. It exists because AcquireLease can only hand out a fresh or
+// recycled slot; a worktree that already holds live work (e.g. a long-lived
+// agent home acquired with plain get) needs get --lease's protection applied
+// in place so a later get or prune cannot hand it out or remove it once its
+// owner process dies. Release clears it exactly like an acquired lease.
+// Refuses when no worktree carries name, or when it is already leased.
+func LeaseExisting(poolDir, name, holder string) (LeaseInfo, error) {
+	var lease LeaseInfo
+	err := WithStateLock(poolDir, func() error {
+		state, err := ReadState(poolDir)
+		if err != nil {
+			return err
+		}
+		for i := range state.Worktrees {
+			wt := &state.Worktrees[i]
+			if wt.Name != name {
+				continue
+			}
+			if wt.Leased {
+				return fmt.Errorf("worktree %s is already leased (holder: %q)", name, wt.LeaseHolder)
+			}
+			if err := markAcquired(wt, acquireOptions{lease: true, leaseHolder: holder}); err != nil {
+				return err
+			}
+			if err := WriteState(poolDir, state); err != nil {
+				return err
+			}
+			lease = LeaseInfo{
+				Path:        wt.Path,
+				LeaseID:     wt.LeaseID,
+				LeaseHolder: wt.LeaseHolder,
+				LeasedAt:    wt.LeasedAt,
+				BaseBranch:  wt.BaseBranch,
+			}
+			return nil
+		}
+		return fmt.Errorf("no worktree named %q in pool", name)
+	})
+	return lease, err
+}
+
 func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts acquireOptions) (LeaseInfo, error) {
 	fmt.Fprintf(os.Stderr, "🌳 Setting up worktree...\n")
 	if !opts.skipFetch && vcs.HasRemote(repoRoot, "origin") {

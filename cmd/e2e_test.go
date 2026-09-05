@@ -678,6 +678,115 @@ func TestLeasedWorktreeSkippedByGetAndPrune(t *testing.T) {
 	}
 }
 
+// TestLeaseExistingProtectsUnleasedWorktreeInPlace covers 'treehouse lease <name>':
+// durably leasing a registered, unleased, in-use worktree must be state-only,
+// must make get --lease hand out a different slot, must be released by return,
+// and must refuse unknown names, already-leased targets, and bad arg counts.
+func TestLeaseExistingProtectsUnleasedWorktreeInPlace(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	env := []string{"SHELL=" + exitShellBin}
+
+	// Create a registered, unleased worktree the way a long-lived agent home
+	// comes to exist: a plain get whose shell exits and returns the slot to the
+	// pool still registered.
+	_, getErr, code := runTreehouse(t, repoDir, homeDir, env, "get")
+	if code != 0 {
+		t.Fatalf("get failed (code %d): %s", code, getErr)
+	}
+	wtPath := extractWorktreePath(getErr, homeDir)
+	if wtPath == "" {
+		t.Fatal("could not extract worktree path")
+	}
+
+	// Uncommitted home state: leasing must be state-only, so this file must
+	// survive it untouched.
+	homeMarker := filepath.Join(wtPath, "agent-home.txt")
+	if err := os.WriteFile(homeMarker, []byte("home\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Lease from inside the worktree: the leasing process itself makes the
+	// slot in-use at lease time, the state a live agent home presents.
+	stdout, leaseErr, code := runTreehouseFromDir(t, repoDir, wtPath, homeDir,
+		[]string{"TREEHOUSE_LEASE_HOLDER=secondmate-home"}, "lease", "1")
+	if code != 0 {
+		t.Fatalf("lease 1 failed (code %d): %s", code, leaseErr)
+	}
+	if strings.TrimSpace(stdout) != wtPath {
+		t.Fatalf("lease printed %q, want the worktree path %q", stdout, wtPath)
+	}
+	if _, err := os.Stat(homeMarker); err != nil {
+		t.Fatalf("lease must not touch the worktree, marker missing: %v", err)
+	}
+
+	// status shows the worktree leased with the recorded holder.
+	statusOut, statusErr, code := runTreehouse(t, repoDir, homeDir, nil, "status", "--json")
+	if code != 0 {
+		t.Fatalf("status --json failed (code %d): %s", code, statusErr)
+	}
+	var entries []statusJSONResult
+	if err := json.Unmarshal([]byte(statusOut), &entries); err != nil {
+		t.Fatalf("status --json returned invalid JSON: %v\n%s", err, statusOut)
+	}
+	var leased *statusJSONResult
+	for i := range entries {
+		if entries[i].Name == "1" {
+			leased = &entries[i]
+		}
+	}
+	if leased == nil {
+		t.Fatalf("worktree 1 missing from status:\n%s", statusOut)
+	}
+	if leased.Status != "leased" || leased.LeaseHolder != "secondmate-home" || leased.LeaseID == "" || leased.LeasedAt == nil {
+		t.Fatalf("expected worktree 1 leased with holder and identity, got %+v", *leased)
+	}
+
+	// A later get --lease must never hand out the leased worktree.
+	secondOut, secondErr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease")
+	if code != 0 {
+		t.Fatalf("get --lease after lease failed (code %d): %s", code, secondErr)
+	}
+	if strings.TrimSpace(secondOut) == wtPath {
+		t.Fatalf("get --lease handed out the in-place leased worktree %s", wtPath)
+	}
+
+	// Refusals.
+	_, unknownErr, code := runTreehouse(t, repoDir, homeDir, nil, "lease", "999")
+	if code == 0 || !strings.Contains(unknownErr, "no worktree named") {
+		t.Fatalf("expected unknown-name refusal, code=%d stderr=%q", code, unknownErr)
+	}
+	_, againErr, code := runTreehouse(t, repoDir, homeDir, nil, "lease", "1")
+	if code == 0 || !strings.Contains(againErr, "already leased") || !strings.Contains(againErr, "secondmate-home") {
+		t.Fatalf("expected already-leased refusal naming the holder, code=%d stderr=%q", code, againErr)
+	}
+	if _, noArgsErr, code := runTreehouse(t, repoDir, homeDir, nil, "lease"); code == 0 {
+		t.Fatalf("expected refusal for missing name, code=0 stderr=%q", noArgsErr)
+	}
+	if _, twoArgsErr, code := runTreehouse(t, repoDir, homeDir, nil, "lease", "1", "2"); code == 0 {
+		t.Fatalf("expected refusal for two names, code=0 stderr=%q", twoArgsErr)
+	}
+
+	// return releases the in-place lease exactly as it releases an acquired one.
+	// --force because the marker file leaves the worktree dirty by construction.
+	_, returnErr, code := runTreehouse(t, repoDir, homeDir, nil, "return", "--force", wtPath)
+	if code != 0 {
+		t.Fatalf("return of in-place lease failed (code %d): %s", code, returnErr)
+	}
+	statusOut, _, code = runTreehouse(t, repoDir, homeDir, nil, "status", "--json")
+	if code != 0 {
+		t.Fatalf("status --json after return failed (code %d)", code)
+	}
+	entries = nil
+	if err := json.Unmarshal([]byte(statusOut), &entries); err != nil {
+		t.Fatalf("status --json returned invalid JSON: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name == "1" && e.Status == "leased" {
+			t.Fatalf("expected worktree 1 to be released, still leased: %+v", e)
+		}
+	}
+}
+
 func TestReturnLegacyPathOnlyIgnoresStaleCallerHolder(t *testing.T) {
 	repoDir, homeDir := setupTestRepo(t)
 
