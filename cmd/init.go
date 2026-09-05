@@ -46,7 +46,7 @@ var initCmd = &cobra.Command{
 			return fmt.Errorf("failed to write config: %w", err)
 		}
 
-		if _, err := f.WriteString("\n# Unique worktree directory names.\n# Unset (default) names every slot's directory after the repository, so\n# tooling that derives per-checkout identity from the directory name reads\n# every slot as the same checkout.\n# Set true to name new slots <repo>-<slot>; worktrees already in the pool\n# keep their paths either way.\n# Override per-command with the --unique-leaf flag. Example: unique_leaf = true\n"); err != nil {
+		if _, err := f.WriteString("\n# Unique worktree directory names.\n# Unset (default) names every slot's directory after the repository, so\n# tooling that derives per-checkout identity from the directory name reads\n# every slot as the same checkout.\n# Set true to name new slots <repo>-<slot>; worktrees already in the pool\n# keep their paths either way.\n# Override per-command with the --unique-leaf flag or the\n# TREEHOUSE_UNIQUE_LEAF env var. Example: unique_leaf = true\n"); err != nil {
 			return fmt.Errorf("failed to write config: %w", err)
 		}
 
