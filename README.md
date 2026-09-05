@@ -239,6 +239,7 @@ With `--no-fetch`, Treehouse resets or creates the worktree from existing local 
 
 Release a lease with `treehouse return <path>`, which terminates lingering processes and verifies that no foreign process remains before it resets the worktree, clears the lease, and returns the worktree to the pool.
 If process termination or that verification fails, the command exits nonzero and leaves the worktree and lease in place instead of recycling a slot that may still be in use.
+A non-interactive dirty return aborts without cleaning: prune will not reclaim that slot. Retry by pasting the printed `treehouse return --force <quoted-path>` hint (shell-quoted so copy-paste does not expand metacharacters). `--force` with no path only works from inside a repository.
 When you pass an explicit path, `treehouse return` can run from outside the repository because it resolves the managed pool from that worktree path.
 
 For retry-safe automation, condition the return on the identity from allocation or status:
