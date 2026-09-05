@@ -1,10 +1,23 @@
 package pool
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 )
+
+// canonicalDir resolves path to the single spelling the running platform uses
+// for that directory. filepath.EvalSymlinks cleans the separators, resolves
+// symlinks (macOS /var -> /private/var), and on Windows expands 8.3 short
+// components and normalizes component case, so a path git printed and a path
+// filepath.Join built compare equal when they name the same directory.
+func canonicalDir(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", path, err)
+	}
+	return resolved
+}
 
 func TestAcquire_WithoutUniqueLeafKeepsRepositoryName(t *testing.T) {
 	repoDir, poolDir := setupRepo(t)
@@ -34,19 +47,11 @@ func TestAcquire_UniqueLeafNamesWorktreeAfterItsSlot(t *testing.T) {
 	}
 	// git and Go spell the same directory differently -- git prints forward
 	// slashes on every platform, and on Windows the two can also disagree on
-	// drive-letter case and 8.3 short components -- so compare the directories
-	// themselves rather than the strings naming them.
+	// drive-letter case and 8.3 short components -- so canonicalize both
+	// spellings before comparing them.
 	toplevel := gitOut(t, wtPath, "rev-parse", "--show-toplevel")
-	gotInfo, err := os.Stat(toplevel)
-	if err != nil {
-		t.Fatalf("stat git toplevel %s: %v", toplevel, err)
-	}
-	wantInfo, err := os.Stat(wtPath)
-	if err != nil {
-		t.Fatalf("stat worktree %s: %v", wtPath, err)
-	}
-	if !os.SameFile(gotInfo, wantInfo) {
-		t.Errorf("git toplevel = %s, want the worktree directory %s", toplevel, wtPath)
+	if got, want := canonicalDir(t, toplevel), canonicalDir(t, wtPath); got != want {
+		t.Errorf("git toplevel = %s, want the worktree directory %s", got, want)
 	}
 }
 
