@@ -115,22 +115,28 @@ func getRunE(cmd *cobra.Command, args []string) error {
 	// this session's own reservation. A 'treehouse lease' taken over this
 	// worktree while the shell was live replaces that reservation with a
 	// durable lease, and returning anyway would reset the tree and clear the
-	// lease that was protecting it. Re-checked under the state lock by the
-	// release below; this early check keeps the detach and the dirty prompt
-	// from touching a slot that is no longer ours.
+	// lease that was protecting it. The detach runs under the same state lock
+	// as this check so a takeover cannot land between them and move the HEAD of
+	// a home the lease was protecting; the release below re-checks under its
+	// own lock, which keeps the dirty prompt and the reset off the slot too.
 	ownReservation := pool.ReleasePreconditions{RequireOwnedByCaller: true}
-	if err := pool.ValidateReleasePreconditions(poolDir, wtPath, ownReservation); errors.Is(err, pool.ErrOwnerPreconditionFailed) {
-		fmt.Fprintf(os.Stderr, "🌳 Not returning %s to the pool: %v; leaving it exactly as it is.\n", ui.PrettyPath(wtPath), err)
-		return nil
-	}
-
-	// A markerless slot must never be detached: dispatch on such a path falls
-	// back to the configured backend, which in an in-project pool would detach
-	// the HEAD of the repository ENCLOSING the pool.
-	if vcs.WorktreeBackendName(wtPath) != "" {
-		if err := vcs.DetachWorktree(wtPath); err != nil {
-			fmt.Fprintf(os.Stderr, "🌳 Warning: failed to detach worktree HEAD: %v\n", err)
+	if err := pool.ValidateReleasePreconditions(poolDir, wtPath, ownReservation, func() error {
+		// A markerless slot must never be detached: dispatch on such a path
+		// falls back to the configured backend, which in an in-project pool
+		// would detach the HEAD of the repository ENCLOSING the pool.
+		if vcs.WorktreeBackendName(wtPath) == "" {
+			return nil
 		}
+		if err := vcs.DetachWorktree(wtPath); err != nil {
+			return fmt.Errorf("failed to detach worktree HEAD: %w", err)
+		}
+		return nil
+	}); err != nil {
+		if errors.Is(err, pool.ErrOwnerPreconditionFailed) {
+			fmt.Fprintf(os.Stderr, "🌳 Not returning %s to the pool: %v; leaving it exactly as it is.\n", ui.PrettyPath(wtPath), err)
+			return nil
+		}
+		fmt.Fprintf(os.Stderr, "🌳 Warning: %v\n", err)
 	}
 
 	dirty, _ := vcs.IsDirty(wtPath)

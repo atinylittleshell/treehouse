@@ -475,15 +475,28 @@ func Release(poolDir, worktreePath string) error {
 }
 
 // ValidateReleasePreconditions checks that a managed worktree still matches
-// the requested lease without performing any release effects.
-func ValidateReleasePreconditions(poolDir, worktreePath string, preconditions ReleasePreconditions) error {
+// the requested lease, then runs guarded (when non-nil) while still holding the
+// state lock. No release effects are performed either way.
+//
+// guarded is how a caller performs a worktree action that must not run on a slot
+// someone else has taken over - get's exit-time detach, which would move the
+// HEAD of a home a concurrent 'treehouse lease' just protected. Checking and
+// then acting outside the lock are two separate instants, and a takeover lands
+// between them; under the lock they are one, exactly as ReleaseConditional
+// already runs its beforeReset.
+func ValidateReleasePreconditions(poolDir, worktreePath string, preconditions ReleasePreconditions, guarded func() error) error {
 	return WithStateLock(poolDir, func() error {
 		state, err := ReadState(poolDir)
 		if err != nil {
 			return err
 		}
-		_, err = releasableWorktree(&state, worktreePath, preconditions)
-		return err
+		if _, err := releasableWorktree(&state, worktreePath, preconditions); err != nil {
+			return err
+		}
+		if guarded == nil {
+			return nil
+		}
+		return guarded()
 	})
 }
 

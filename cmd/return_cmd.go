@@ -58,7 +58,7 @@ var returnCmd = &cobra.Command{
 			if cmd.Flags().Changed("if-lease-holder") {
 				preconditions.ExpectedLeaseHolder = &returnIfLeaseHolder
 			}
-			err = pool.ValidateReleasePreconditions(poolDir, wtPath, preconditions)
+			err = pool.ValidateReleasePreconditions(poolDir, wtPath, preconditions, nil)
 			if err == nil {
 				err = confirmWorktreeReturn(wtPath)
 			}
