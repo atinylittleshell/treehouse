@@ -1230,11 +1230,20 @@ func TestReturnNonTTYDirtyExplainsUnreclaimableSlot(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected non-TTY dirty abort to exit 0, got %d: %s", code, returnErr)
 	}
+	t.Logf("non-TTY dirty abort stderr:\n%s", returnErr)
 	if !strings.Contains(returnErr, "prune will not reclaim this slot") {
 		t.Fatalf("expected unreclaimable-slot explanation, got: %s", returnErr)
 	}
 	if !strings.Contains(returnErr, "return --force") {
 		t.Fatalf("expected --force hint, got: %s", returnErr)
+	}
+	// Hint must be pasteable: "Use treehouse return --force <quoted-path> ..."
+	// with no outer decorative quotes wrapping the whole command.
+	if !strings.Contains(returnErr, "Use treehouse return --force ") {
+		t.Fatalf("expected undecorated --force hint, got: %s", returnErr)
+	}
+	if strings.Contains(returnErr, "Use 'treehouse return --force") {
+		t.Fatalf("hint must not wrap the retry command in decorative quotes, got: %s", returnErr)
 	}
 	if !strings.Contains(returnErr, wtPath) {
 		t.Fatalf("expected --force hint to include worktree path %q, got: %s", wtPath, returnErr)
