@@ -3547,6 +3547,7 @@ func TestPrune_MarkerlessSlotSkippedAsCannotVerify(t *testing.T) {
 func TestValidateReleasePreconditions_GuardsTheActionUnderTheStateLock(t *testing.T) {
 	poolDir := t.TempDir()
 	owned := WorktreeEntry{Name: "1", Path: filepath.Join(poolDir, "1", "myrepo")}
+	setSeedInventory(&owned, []string{}, true)
 	if err := reserveOwner(&owned); err != nil {
 		t.Fatal(err)
 	}
