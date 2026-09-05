@@ -72,7 +72,7 @@ func TestBranchExistsRejectsNonBranchRefs(t *testing.T) {
 	mustGit(t, repoDir, "commit", "--allow-empty", "-m", "second")
 	mustGit(t, repoDir, "tag", "v1.0.0")
 
-	head := gitOutput(t, repoDir, "rev-parse", "HEAD")
+	head := mustGitOutput(t, repoDir, "rev-parse", "HEAD")
 	// The trailing forms are revision EXPRESSIONS: rev-parse --verify resolves
 	// them against a real branch, so a prefix check alone would pin the base to
 	// a commit that never advances.
@@ -83,7 +83,7 @@ func TestBranchExistsRejectsNonBranchRefs(t *testing.T) {
 	}
 }
 
-func gitOutput(t *testing.T, dir string, args ...string) string {
+func mustGitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	out, err := runGit(dir, args...)
 	if err != nil {
@@ -97,10 +97,10 @@ func gitOutput(t *testing.T, dir string, args ...string) string {
 func TestBranchRefPrefersBranchOverSameNamedTag(t *testing.T) {
 	repoDir := setupBaseBranchRepo(t)
 	mustGit(t, repoDir, "branch", "release-1.0")
-	branchTip := gitOutput(t, repoDir, "rev-parse", "refs/heads/release-1.0")
+	branchTip := mustGitOutput(t, repoDir, "rev-parse", "refs/heads/release-1.0")
 	mustGit(t, repoDir, "commit", "--allow-empty", "-m", "after the branch")
 	mustGit(t, repoDir, "tag", "release-1.0")
-	tagTip := gitOutput(t, repoDir, "rev-parse", "refs/tags/release-1.0")
+	tagTip := mustGitOutput(t, repoDir, "rev-parse", "refs/tags/release-1.0")
 	if branchTip == tagTip {
 		t.Fatal("fixture needs the tag and the branch at different commits")
 	}
@@ -117,7 +117,7 @@ func TestBranchRefPrefersBranchOverSameNamedTag(t *testing.T) {
 func TestAddWorktreeCutsFromBranchNotSameNamedTag(t *testing.T) {
 	repoDir := setupBaseBranchRepo(t)
 	mustGit(t, repoDir, "branch", "release-1.0")
-	branchTip := gitOutput(t, repoDir, "rev-parse", "refs/heads/release-1.0")
+	branchTip := mustGitOutput(t, repoDir, "rev-parse", "refs/heads/release-1.0")
 	mustGit(t, repoDir, "commit", "--allow-empty", "-m", "after the branch")
 	mustGit(t, repoDir, "tag", "release-1.0")
 
@@ -125,7 +125,7 @@ func TestAddWorktreeCutsFromBranchNotSameNamedTag(t *testing.T) {
 	if err := AddWorktree(repoDir, wtPath, "release-1.0"); err != nil {
 		t.Fatalf("AddWorktree failed: %v", err)
 	}
-	if got := gitOutput(t, wtPath, "rev-parse", "HEAD"); got != branchTip {
+	if got := mustGitOutput(t, wtPath, "rev-parse", "HEAD"); got != branchTip {
 		t.Errorf("worktree HEAD = %s, want branch tip %s", got, branchTip)
 	}
 }
