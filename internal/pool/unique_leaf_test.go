@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -31,12 +32,21 @@ func TestAcquire_UniqueLeafNamesWorktreeAfterItsSlot(t *testing.T) {
 	if wtPath != want {
 		t.Errorf("worktree path = %s, want %s", wtPath, want)
 	}
-	// git prints the toplevel with forward slashes on every platform, so
-	// normalize it the way the rest of the suite does before comparing it to a
-	// path built with filepath.Join.
-	toplevel := filepath.Clean(filepath.FromSlash(gitOut(t, wtPath, "rev-parse", "--show-toplevel")))
-	if toplevel != filepath.Clean(wtPath) {
-		t.Errorf("git toplevel = %s, want %s", toplevel, filepath.Clean(wtPath))
+	// git and Go spell the same directory differently -- git prints forward
+	// slashes on every platform, and on Windows the two can also disagree on
+	// drive-letter case and 8.3 short components -- so compare the directories
+	// themselves rather than the strings naming them.
+	toplevel := gitOut(t, wtPath, "rev-parse", "--show-toplevel")
+	gotInfo, err := os.Stat(toplevel)
+	if err != nil {
+		t.Fatalf("stat git toplevel %s: %v", toplevel, err)
+	}
+	wantInfo, err := os.Stat(wtPath)
+	if err != nil {
+		t.Fatalf("stat worktree %s: %v", wtPath, err)
+	}
+	if !os.SameFile(gotInfo, wantInfo) {
+		t.Errorf("git toplevel = %s, want the worktree directory %s", toplevel, wtPath)
 	}
 }
 
