@@ -47,8 +47,13 @@ type LeaseInfo struct {
 	LeaseHolder string    `json:"lease_holder"`
 	LeasedAt    time.Time `json:"leased_at"`
 	// BaseBranch is the branch this acquisition was cut from, explicit or
-	// inferred. Always populated, never persisted: it describes one
-	// acquisition, and the next reset resolves the branch again.
+	// inferred, and is never persisted: it describes one acquisition, and the
+	// next reset resolves the branch again. Acquisition always populates it,
+	// because acquire cannot proceed without a resolved base. LeaseExisting
+	// resolves it best-effort and reports it empty when the slot records no
+	// explicit base and its own backend cannot answer, because that verb
+	// needs no branch and must never refuse to protect a home over a
+	// reporting field.
 	BaseBranch string `json:"base_branch"`
 }
 
@@ -138,7 +143,7 @@ func AcquireLeaseInfoWithOptions(repoRoot, poolDir string, poolSize int, postCre
 // whose worktree directory is gone is refused by that name rather than stamped
 // with a lease for a home that does not exist. Refuses an unknown name, a slot
 // being destroyed, and an already-leased slot; a refusal writes no state.
-func LeaseExisting(repoRoot, poolDir, name, holder string) (LeaseInfo, error) {
+func LeaseExisting(poolDir, name, holder string) (LeaseInfo, error) {
 	var lease LeaseInfo
 	err := WithStateLock(poolDir, func() error {
 		state, err := ReadState(poolDir)
@@ -167,14 +172,16 @@ func LeaseExisting(repoRoot, poolDir, name, holder string) (LeaseInfo, error) {
 			if wt.Leased {
 				return fmt.Errorf("worktree %s is already leased (holder: %q)", name, wt.LeaseHolder)
 			}
-			// The reported base is the one this acquisition would reset to,
-			// matching get --lease. The persisted field still records only an
+			// Best-effort reporting only: resolution failure degrades to an
+			// empty base rather than refusing to protect the home. Dispatch is
+			// on the slot's own marker, like every other per-worktree fact, so
+			// a slot of the other flavor is never answered by the repository's
+			// configured backend. The persisted field still records only an
 			// explicit base, so an inferred slot stays inferred.
 			base := wt.BaseBranch
 			if base == "" {
-				base, err = vcs.GetDefaultBranch(repoRoot)
-				if err != nil {
-					return err
+				if resolved, resolveErr := vcs.DefaultBranchForWorktree(wt.Path); resolveErr == nil {
+					base = resolved
 				}
 			}
 			if err := markAcquired(wt, acquireOptions{lease: true, leaseHolder: holder}); err != nil {
@@ -573,8 +580,10 @@ func releasableWorktree(state *State, worktreePath string, preconditions Release
 }
 
 func validateReleasePreconditions(wt WorktreeEntry, preconditions ReleasePreconditions) error {
-	if preconditions.RequireOwnedByCaller && !ownedByCaller(wt) {
-		return fmt.Errorf("%w: worktree %s no longer carries this process's reservation", ErrOwnerPreconditionFailed, wt.Path)
+	if preconditions.RequireOwnedByCaller {
+		if err := checkOwnedByCaller(wt); err != nil {
+			return err
+		}
 	}
 	if preconditions.ExpectedLeaseID == nil && preconditions.ExpectedLeaseHolder == nil {
 		return nil
@@ -690,16 +699,26 @@ func ownerAlive(wt WorktreeEntry) bool {
 	return ok && startedAt == wt.OwnerStartedAt
 }
 
-// ownedByCaller reports whether wt still carries the reservation this very
-// process took. Both fields are compared because a PID alone can be reused by
-// an unrelated process whose reservation must not be mistaken for ours.
-func ownedByCaller(wt WorktreeEntry) bool {
-	pid := int32(os.Getpid())
-	if wt.OwnerPID != pid {
-		return false
+// checkOwnedByCaller reports whether wt still carries the reservation this very
+// process took, naming which of the three distinct failures happened: the slot
+// was already released (a `treehouse return` run from inside the subshell
+// leaves it free, not taken by anyone), it now carries a different reservation,
+// or this process's own identity could not be read to compare against. Both
+// owner fields are compared because a PID alone can be reused by an unrelated
+// process whose reservation must not be mistaken for ours.
+func checkOwnedByCaller(wt WorktreeEntry) error {
+	if wt.OwnerPID == 0 {
+		return fmt.Errorf("%w: it was already released", ErrOwnerPreconditionFailed)
 	}
+	pid := int32(os.Getpid())
 	startedAt, ok := process.StartedAt(pid)
-	return ok && startedAt == wt.OwnerStartedAt
+	if !ok {
+		return fmt.Errorf("%w: this process's own identity could not be read to confirm the reservation", ErrOwnerPreconditionFailed)
+	}
+	if wt.OwnerPID != pid || wt.OwnerStartedAt != startedAt {
+		return fmt.Errorf("%w: it is now reserved by another session", ErrOwnerPreconditionFailed)
+	}
+	return nil
 }
 
 func reserveOwner(wt *WorktreeEntry) error {

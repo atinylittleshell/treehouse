@@ -120,7 +120,7 @@ func getRunE(cmd *cobra.Command, args []string) error {
 	// from touching a slot that is no longer ours.
 	ownReservation := pool.ReleasePreconditions{RequireOwnedByCaller: true}
 	if err := pool.ValidateReleasePreconditions(poolDir, wtPath, ownReservation); errors.Is(err, pool.ErrOwnerPreconditionFailed) {
-		fmt.Fprintf(os.Stderr, "🌳 Worktree %s is now reserved by someone else; leaving it in place.\n", ui.PrettyPath(wtPath))
+		fmt.Fprintf(os.Stderr, "🌳 Not returning %s to the pool: %v; leaving it exactly as it is.\n", ui.PrettyPath(wtPath), err)
 		return nil
 	}
 
@@ -146,7 +146,7 @@ func getRunE(cmd *cobra.Command, args []string) error {
 
 	if err := returnWorktreeToPool(poolDir, wtPath, releaseBaseBranch(repoRoot, cfg), ownReservation); err != nil {
 		if errors.Is(err, pool.ErrOwnerPreconditionFailed) {
-			fmt.Fprintf(os.Stderr, "🌳 Worktree %s is now reserved by someone else; leaving it in place.\n", ui.PrettyPath(wtPath))
+			fmt.Fprintf(os.Stderr, "🌳 Not returning %s to the pool: %v; leaving it exactly as it is.\n", ui.PrettyPath(wtPath), err)
 			return nil
 		}
 		fmt.Fprintf(os.Stderr, "🌳 Warning: %v; leaving worktree in place.\n", err)
