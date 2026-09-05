@@ -51,11 +51,7 @@ func leaseRunE(cmd *cobra.Command, args []string) error {
 		holder = os.Getenv("TREEHOUSE_LEASE_HOLDER")
 	}
 
-	repoRoot, err := vcs.FindRepoRoot()
-	if err != nil {
-		return fmt.Errorf("not in a git or jj repository: %w", err)
-	}
-	repoRoot, err = vcs.FindMainRepoRoot()
+	repoRoot, err := vcs.FindMainRepoRoot()
 	if err != nil {
 		return fmt.Errorf("not in a git or jj repository: %w", err)
 	}
@@ -70,7 +66,7 @@ func leaseRunE(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to resolve pool directory: %w", err)
 	}
 
-	lease, err := pool.LeaseExisting(poolDir, args[0], holder)
+	lease, err := pool.LeaseExisting(repoRoot, poolDir, args[0], holder)
 	if err != nil {
 		return err
 	}

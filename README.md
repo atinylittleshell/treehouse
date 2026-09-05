@@ -228,7 +228,7 @@ Pass `--lease-holder <label>` (or set `$TREEHOUSE_LEASE_HOLDER`) to record who h
 treehouse lease 3 --lease-holder secondmate-home
 ```
 
-`lease` is state-only: it never resets, fetches, cleans, or checks out the worktree, so it is safe on a slot holding live work. It refuses when the name is unknown or the worktree is already leased (naming the holder). `treehouse return <path>` releases an in-place lease exactly like an acquired one.
+`lease` is state-only: it never resets, fetches, cleans, or checks out the worktree, so it is safe on a slot holding live work. It refuses when the name is unknown, when the registered worktree's directory no longer exists, when the slot is being destroyed, or when it is already leased (naming the holder). Leasing a worktree whose `treehouse get` shell is still running is safe: when that shell exits, `get` sees the slot is no longer its own and leaves it untouched. `treehouse return <path>` releases an in-place lease exactly like an acquired one.
 
 Every acquisition receives a new random `lease_id`, including reacquiring the same path with the same holder. Automation can request a stable machine-readable allocation:
 

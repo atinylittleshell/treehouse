@@ -133,21 +133,49 @@ func AcquireLeaseInfoWithOptions(repoRoot, poolDir string, poolSize int, postCre
 // agent home acquired with plain get) needs get --lease's protection applied
 // in place so a later get or prune cannot hand it out or remove it once its
 // owner process dies. Release clears it exactly like an acquired lease.
-// Refuses when no worktree carries name, or when it is already leased.
-func LeaseExisting(poolDir, name, holder string) (LeaseInfo, error) {
+//
+// State is healed first, like every other state-mutating pool path, so a name
+// whose worktree directory is gone is refused by that name rather than stamped
+// with a lease for a home that does not exist. Refuses an unknown name, a slot
+// being destroyed, and an already-leased slot; a refusal writes no state.
+func LeaseExisting(repoRoot, poolDir, name, holder string) (LeaseInfo, error) {
 	var lease LeaseInfo
 	err := WithStateLock(poolDir, func() error {
 		state, err := ReadState(poolDir)
 		if err != nil {
 			return err
 		}
+
+		registered := false
+		for _, wt := range state.Worktrees {
+			if wt.Name == name {
+				registered = true
+				break
+			}
+		}
+
+		state = healState(state)
+
 		for i := range state.Worktrees {
 			wt := &state.Worktrees[i]
 			if wt.Name != name {
 				continue
 			}
+			if wt.Destroying {
+				return fmt.Errorf("worktree %s is being destroyed", name)
+			}
 			if wt.Leased {
 				return fmt.Errorf("worktree %s is already leased (holder: %q)", name, wt.LeaseHolder)
+			}
+			// The reported base is the one this acquisition would reset to,
+			// matching get --lease. The persisted field still records only an
+			// explicit base, so an inferred slot stays inferred.
+			base := wt.BaseBranch
+			if base == "" {
+				base, err = vcs.GetDefaultBranch(repoRoot)
+				if err != nil {
+					return err
+				}
 			}
 			if err := markAcquired(wt, acquireOptions{lease: true, leaseHolder: holder}); err != nil {
 				return err
@@ -155,14 +183,12 @@ func LeaseExisting(poolDir, name, holder string) (LeaseInfo, error) {
 			if err := WriteState(poolDir, state); err != nil {
 				return err
 			}
-			lease = LeaseInfo{
-				Path:        wt.Path,
-				LeaseID:     wt.LeaseID,
-				LeaseHolder: wt.LeaseHolder,
-				LeasedAt:    wt.LeasedAt,
-				BaseBranch:  wt.BaseBranch,
-			}
+			lease = leaseInfoFromEntry(*wt, base)
 			return nil
+		}
+
+		if registered {
+			return fmt.Errorf("worktree %s is registered but its directory no longer exists; run 'treehouse status' to clear the stale entry", name)
 		}
 		return fmt.Errorf("no worktree named %q in pool", name)
 	})
@@ -413,11 +439,22 @@ func markAcquired(wt *WorktreeEntry, opts acquireOptions) error {
 // identifies the worktree's current lease.
 var ErrLeasePreconditionFailed = errors.New("lease precondition failed")
 
+// ErrOwnerPreconditionFailed reports that a release no longer identifies the
+// calling process's own short-lived owner reservation.
+var ErrOwnerPreconditionFailed = errors.New("owner precondition failed")
+
 // ReleasePreconditions optionally constrain a release to the current lease.
 // Pointer fields distinguish an omitted condition from an expected empty value.
 type ReleasePreconditions struct {
 	ExpectedLeaseID     *string
 	ExpectedLeaseHolder *string
+	// RequireOwnedByCaller limits the release to a worktree that still carries
+	// the calling process's own owner reservation, which is what an acquiring
+	// `treehouse get` holds until it returns the slot. Without it, a session
+	// that released the slot to someone else - a durable lease taken over a
+	// live agent home, or a later acquisition - would still reset the worktree
+	// and clear that reservation when its subshell exits.
+	RequireOwnedByCaller bool
 }
 
 // Release resets a managed worktree, clears its short-lived owner reservation or
@@ -536,6 +573,9 @@ func releasableWorktree(state *State, worktreePath string, preconditions Release
 }
 
 func validateReleasePreconditions(wt WorktreeEntry, preconditions ReleasePreconditions) error {
+	if preconditions.RequireOwnedByCaller && !ownedByCaller(wt) {
+		return fmt.Errorf("%w: worktree %s no longer carries this process's reservation", ErrOwnerPreconditionFailed, wt.Path)
+	}
 	if preconditions.ExpectedLeaseID == nil && preconditions.ExpectedLeaseHolder == nil {
 		return nil
 	}
@@ -647,6 +687,18 @@ func ownerAlive(wt WorktreeEntry) bool {
 		return false
 	}
 	startedAt, ok := process.StartedAt(wt.OwnerPID)
+	return ok && startedAt == wt.OwnerStartedAt
+}
+
+// ownedByCaller reports whether wt still carries the reservation this very
+// process took. Both fields are compared because a PID alone can be reused by
+// an unrelated process whose reservation must not be mistaken for ours.
+func ownedByCaller(wt WorktreeEntry) bool {
+	pid := int32(os.Getpid())
+	if wt.OwnerPID != pid {
+		return false
+	}
+	startedAt, ok := process.StartedAt(pid)
 	return ok && startedAt == wt.OwnerStartedAt
 }
 
