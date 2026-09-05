@@ -970,6 +970,17 @@ func TestLeaseSurvivesTheAcquiringSessionExiting(t *testing.T) {
 		t.Fatalf("get reset the leased worktree, its committed work is gone: %v\nget stderr: %s", err, getErrBuf.String())
 	}
 
+	// The bail-out must say the slot was PROTECTED, not discarded: the lease
+	// path zeroes the owner fields too, so reporting the empty reservation
+	// would tell the operator their home was released when it was leased.
+	bailout := getErrBuf.String()
+	if !strings.Contains(bailout, "durably leased") || !strings.Contains(bailout, "live-home") {
+		t.Errorf("get must report the slot as durably leased and name the holder, got stderr: %s", bailout)
+	}
+	if strings.Contains(bailout, "already released") || strings.Contains(bailout, "another session") {
+		t.Errorf("get mislabelled the leased slot, got stderr: %s", bailout)
+	}
+
 	statusOut, statusErr, code := runTreehouse(t, repoDir, homeDir, nil, "status", "--json")
 	if code != 0 {
 		t.Fatalf("status --json failed (code %d): %s", code, statusErr)
