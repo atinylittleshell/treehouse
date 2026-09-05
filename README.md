@@ -166,6 +166,7 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
 | `treehouse`                | Get a worktree and open a subshell (alias for `get`) |
 | `treehouse get`            | Acquire a worktree from the pool                     |
 | `treehouse get --lease`    | Durably lease a worktree without a subshell; print its path |
+| `treehouse lease <name>`   | Durably lease an existing pool worktree in place, without touching its files or git state |
 | `treehouse enter <name>`   | Open a subshell in an existing worktree by name (the number from `status`), even if it is in use; pool state is left untouched |
 | `treehouse status`         | Show pool status (highlights leased and current worktrees) |
 | `treehouse return [path]`  | Release any lease and return a worktree only after verifying foreign processes stopped |
@@ -184,6 +185,8 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
 | `get`     | `--lease-holder` | Optional label recorded as the lease holder (defaults to `$TREEHOUSE_LEASE_HOLDER`) |
 | `get`     | `--json` | Print `path`, `lease_id`, `lease_holder`, `leased_at`, and `base_branch` as JSON (requires `--lease`) |
 | `get`     | `--base` | Branch to cut this worktree from, overriding `base_branch` in config |
+| `lease`   | `--lease-holder` | Optional label recorded as the lease holder (defaults to `$TREEHOUSE_LEASE_HOLDER`) |
+| `lease`   | `--json` | Print `path`, `lease_id`, `lease_holder`, `leased_at`, and `base_branch` as JSON (`base_branch` is best-effort: empty when the slot records no explicit base and its own worktree cannot resolve a default) |
 | `enter`   | `--print-path` | Print only the worktree's absolute path to stdout instead of opening a subshell (for `cd "$(treehouse enter --print-path 1)"`) |
 | `status`  | `--json` | Print worktree status and lease metadata as JSON |
 | `return`  | `--force` | Clean, reset, and return without prompting |
@@ -218,6 +221,14 @@ A leased worktree is never handed out by a later `get` and never removed by `pru
 A bulk `treehouse destroy <pool> --all` never removes it either; only naming its exact path with `treehouse destroy <path> --include-leased --yes` will.
 
 Pass `--lease-holder <label>` (or set `$TREEHOUSE_LEASE_HOLDER`) to record who holds the lease; `treehouse status` then shows it next to the `leased` state.
+
+`get --lease` can only protect a worktree it acquires itself. To give a worktree that already exists - a long-lived home acquired with plain `get`, or any registered slot that predates leases - the same protection after the fact, lease it in place:
+
+```sh
+treehouse lease 3 --lease-holder secondmate-home
+```
+
+`lease` is state-only: it never resets, fetches, cleans, or checks out the worktree, so it is safe on a slot holding live work. It refuses when the name is unknown, when the registered worktree's directory no longer exists, when the slot is being destroyed, or when it is already leased (naming the holder). Leasing a worktree whose `treehouse get` shell is still running is safe: when that shell exits, `get` sees the slot is no longer its own and leaves it untouched. `treehouse return <path>` releases an in-place lease exactly like an acquired one.
 
 Every acquisition receives a new random `lease_id`, including reacquiring the same path with the same holder. Automation can request a stable machine-readable allocation:
 
@@ -402,7 +413,7 @@ Pooled jj workspaces inherit the opt-in from their main repository root, so an u
 
 The backend is resolved on every command, and existing pool slots keep the flavor they were created with: changing the opt-in does not convert worktrees already in the pool.
 `destroy` and `prune` handle each slot by its own flavor (its `.git` or `.jj` marker), so a git worktree is still cleanly deregistered from git even after opting the repository into jj, and vice versa.
-A slot whose marker is missing entirely (a damaged slot) is never reused, reset, or detached; `treehouse status` reports it as `damaged`, `treehouse return` only clears its lease, `prune` reports it as unverifiable, and `treehouse destroy <path> --include-unlanded` removes it.
+A slot whose marker is missing entirely (a damaged slot) is never reused, reset, or detached; `treehouse status` reports it as `damaged`, `treehouse return` only clears its lease, `treehouse lease` still protects it but reports an empty `base_branch` rather than reading one through a fallback backend, `prune` reports it as unverifiable, and `treehouse destroy <path> --include-unlanded` removes it.
 `treehouse get` is flavor-aware too: it only reuses slots matching the backend the repository currently selects, and creates new slots with that backend, so a caller who opted in to jj is never handed a git worktree (or vice versa).
 Old-flavor slots stay in the pool untouched — `treehouse status` marks them and they count toward `max_trees` — until you migrate them: `treehouse destroy` the old slots and re-acquire with `treehouse get`.
 

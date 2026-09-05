@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -110,14 +111,32 @@ func getRunE(cmd *cobra.Command, args []string) error {
 	}
 	_, err = shell.Spawn(wtPath, env)
 
-	// Subshell exited — handle return. A markerless slot must never be
-	// detached: dispatch on such a path falls back to the configured backend,
-	// which in an in-project pool would detach the HEAD of the repository
-	// ENCLOSING the pool.
-	if vcs.WorktreeBackendName(wtPath) != "" {
-		if err := vcs.DetachWorktree(wtPath); err != nil {
-			fmt.Fprintf(os.Stderr, "🌳 Warning: failed to detach worktree HEAD: %v\n", err)
+	// Subshell exited — handle return, but only while the slot still carries
+	// this session's own reservation. A 'treehouse lease' taken over this
+	// worktree while the shell was live replaces that reservation with a
+	// durable lease, and returning anyway would reset the tree and clear the
+	// lease that was protecting it. The detach runs under the same state lock
+	// as this check so a takeover cannot land between them and move the HEAD of
+	// a home the lease was protecting; the release below re-checks under its
+	// own lock, which keeps the dirty prompt and the reset off the slot too.
+	ownReservation := pool.ReleasePreconditions{RequireOwnedByCaller: true}
+	if err := pool.ValidateReleasePreconditions(poolDir, wtPath, ownReservation, func() error {
+		// A markerless slot must never be detached: dispatch on such a path
+		// falls back to the configured backend, which in an in-project pool
+		// would detach the HEAD of the repository ENCLOSING the pool.
+		if vcs.WorktreeBackendName(wtPath) == "" {
+			return nil
 		}
+		if err := vcs.DetachWorktree(wtPath); err != nil {
+			return fmt.Errorf("failed to detach worktree HEAD: %w", err)
+		}
+		return nil
+	}); err != nil {
+		if errors.Is(err, pool.ErrOwnerPreconditionFailed) {
+			fmt.Fprintf(os.Stderr, "🌳 Not returning %s to the pool: %v; leaving it exactly as it is.\n", ui.PrettyPath(wtPath), err)
+			return nil
+		}
+		fmt.Fprintf(os.Stderr, "🌳 Warning: %v\n", err)
 	}
 
 	dirty, _ := vcs.IsDirty(wtPath)
@@ -131,7 +150,11 @@ func getRunE(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := returnWorktreeToPool(poolDir, wtPath, releaseBaseBranch(repoRoot, cfg)); err != nil {
+	if err := returnWorktreeToPool(poolDir, wtPath, releaseBaseBranch(repoRoot, cfg), ownReservation); err != nil {
+		if errors.Is(err, pool.ErrOwnerPreconditionFailed) {
+			fmt.Fprintf(os.Stderr, "🌳 Not returning %s to the pool: %v; leaving it exactly as it is.\n", ui.PrettyPath(wtPath), err)
+			return nil
+		}
 		fmt.Fprintf(os.Stderr, "🌳 Warning: %v; leaving worktree in place.\n", err)
 		return err
 	}
@@ -145,8 +168,8 @@ func getRunE(cmd *cobra.Command, args []string) error {
 // as the release's beforeReset step, under the same state lock and immediately
 // before the reset, so a writer that re-enters the worktree cannot slip between
 // the emptiness check and the destructive reset.
-func returnWorktreeToPool(poolDir, wtPath, baseBranch string) error {
-	return pool.ReleaseConditional(poolDir, wtPath, baseBranch, pool.ReleasePreconditions{}, func() error {
+func returnWorktreeToPool(poolDir, wtPath, baseBranch string, preconditions pool.ReleasePreconditions) error {
+	return pool.ReleaseConditional(poolDir, wtPath, baseBranch, preconditions, func() error {
 		return killLingeringProcesses(wtPath)
 	})
 }
