@@ -119,10 +119,49 @@ func quotePOSIXReturnPath(p string) string {
 func quoteWindowsReturnPath(p string) string {
 	// cmd.exe is Treehouse's Windows shell. Double quotes group the path and
 	// neutralize $(), backticks, and command separators. Doubled quotes are
-	// the cmd escape for embedded ". Do not rewrite %: batch-style %% escaping
-	// survives paste into an interactive prompt as a different path, so the
-	// retry hint would miss the managed worktree.
-	return `"` + strings.ReplaceAll(p, `"`, `""`) + `"`
+	// the cmd escape for embedded ".
+	//
+	// Interactive cmd expands %NAME% even inside double quotes, before the
+	// process starts. Batch-style %% doubling is not paste-safe: a prompt
+	// keeps the extra percents, so lookup misses the managed worktree.
+	// Split %NAME% across a quote boundary (%"NAME"%) so cmd concatenates
+	// the original path and does not expand NAME.
+	var b strings.Builder
+	b.Grow(len(p) + 2)
+	b.WriteByte('"')
+	for i := 0; i < len(p); {
+		switch p[i] {
+		case '"':
+			b.WriteString(`""`)
+			i++
+		case '%':
+			j := i + 1
+			for j < len(p) && isCmdEnvNameChar(p[j]) {
+				j++
+			}
+			if j > i+1 && j < len(p) && p[j] == '%' {
+				b.WriteString(`%"`)
+				b.WriteString(p[i+1 : j])
+				b.WriteString(`"%`)
+				i = j + 1
+			} else {
+				b.WriteByte('%')
+				i++
+			}
+		default:
+			b.WriteByte(p[i])
+			i++
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+func isCmdEnvNameChar(c byte) bool {
+	return c == '_' ||
+		(c >= 'A' && c <= 'Z') ||
+		(c >= 'a' && c <= 'z') ||
+		(c >= '0' && c <= '9')
 }
 
 func confirmWorktreeReturn(wtPath string) error {

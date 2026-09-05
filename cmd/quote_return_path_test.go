@@ -53,10 +53,13 @@ func TestQuoteWindowsReturnPathPreservesPercentSignsForPaste(t *testing.T) {
 		path string
 		want string
 	}{
-		// Interactive cmd paste must keep the real path; %% would look up a
-		// different worktree and leave the dirty slot unreclaimed.
-		{name: "env-like component", path: `C:\pool\%TARGET%\repo`, want: `"C:\pool\%TARGET%\repo"`},
-		{name: "percent and quotes", path: `C:\pool\%A%\say "hi"`, want: `"C:\pool\%A%\say ""hi"""`},
+		// Interactive cmd expands %NAME% inside double quotes. Split the
+		// name across a quote boundary so paste still looks up the same
+		// path. %% would look up a different worktree.
+		{name: "env-like component", path: `C:\pool\%TARGET%\repo`, want: `"C:\pool\%"TARGET"%\repo"`},
+		{name: "percent and quotes", path: `C:\pool\%A%\say "hi"`, want: `"C:\pool\%"A"%\say ""hi"""`},
+		{name: "username", path: `C:\Users\%USERNAME%\repo`, want: `"C:\Users\%"USERNAME"%\repo"`},
+		{name: "unpaired percent", path: `C:\100%\done`, want: `"C:\100%\done"`},
 		{name: "plain", path: `C:\pool\1\repo`, want: `"C:\pool\1\repo"`},
 	}
 	for _, tc := range cases {
@@ -67,6 +70,9 @@ func TestQuoteWindowsReturnPathPreservesPercentSignsForPaste(t *testing.T) {
 			}
 			if strings.Contains(got, "%%") {
 				t.Fatalf("quoteWindowsReturnPath must not batch-escape %% for paste, got %q", got)
+			}
+			if strings.Contains(tc.path, "%TARGET%") && strings.Contains(got, "%TARGET%") {
+				t.Fatalf("quoted form still contains expandable %%TARGET%%: %q", got)
 			}
 		})
 	}
