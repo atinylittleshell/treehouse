@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kunchenguid/treehouse/internal/config"
 )
 
 type leaseJSONResult struct {
@@ -225,14 +227,19 @@ func runTreehouseFromDir(t *testing.T, repoDir, workDir, homeDir string, extraEn
 
 // buildEnv constructs an environment for a treehouse subprocess, overriding
 // HOME/USERPROFILE to the test homeDir and suppressing update checks.
+//
+// Every TREEHOUSE_* variable is dropped rather than enumerated: the binary
+// honors a growing set of them (TREEHOUSE_ROOT, _VCS, _DIR, _UNIQUE_LEAF,
+// _LEASE_HOLDER, ...), and an enumeration silently rots as new ones are added,
+// leaving the suite steerable by whatever the developer or CI job happens to
+// export. The values a test actually wants are passed in extra and appended
+// below, so they still reach the subprocess.
 func buildEnv(homeDir string, extra ...string) []string {
 	skip := map[string]bool{
-		"HOME":          true,
-		"USERPROFILE":   true,
-		"HOMEDRIVE":     true,
-		"HOMEPATH":      true,
-		"TREEHOUSE_DIR": true,
-		"TREEHOUSE_VCS": true,
+		"HOME":        true,
+		"USERPROFILE": true,
+		"HOMEDRIVE":   true,
+		"HOMEPATH":    true,
 	}
 	for _, kv := range extra {
 		if k, _, ok := strings.Cut(kv, "="); ok {
@@ -243,7 +250,8 @@ func buildEnv(homeDir string, extra ...string) []string {
 	var env []string
 	for _, e := range os.Environ() {
 		if k, _, ok := strings.Cut(e, "="); ok {
-			if skip[strings.ToUpper(k)] {
+			k = strings.ToUpper(k)
+			if skip[k] || strings.HasPrefix(k, "TREEHOUSE_") {
 				continue
 			}
 		}
@@ -258,6 +266,32 @@ func buildEnv(homeDir string, extra ...string) []string {
 	env = append(env, "TREEHOUSE_NO_UPDATE_CHECK=1")
 	env = append(env, extra...)
 	return env
+}
+
+// TestTreehouseEnvFromParentProcessDoesNotSteerTheSuite pins the harness
+// contract in buildEnv. The treehouse binary honors a growing set of
+// TREEHOUSE_* variables, so a developer shell or CI job that exports one must
+// not change what these e2e tests observe. TREEHOUSE_ROOT is the sharp case:
+// it moves the whole pool out of the test home, which used to fail every test
+// that reads a worktree path.
+func TestTreehouseEnvFromParentProcessDoesNotSteerTheSuite(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	t.Setenv(config.RootEnvVar, ".")
+	t.Setenv(config.UniqueLeafEnvVar, "1")
+
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "get", "--lease")
+	if code != 0 {
+		t.Fatalf("get --lease failed (code %d): %s", code, stderr)
+	}
+	wtPath := strings.TrimSpace(stdout)
+
+	poolRoot := filepath.Join(homeDir, ".treehouse")
+	if !strings.HasPrefix(wtPath, poolRoot+string(filepath.Separator)) {
+		t.Errorf("worktree %s is not under the test pool root %s: TREEHOUSE_ROOT reached the subprocess", wtPath, poolRoot)
+	}
+	if got, want := filepath.Base(wtPath), filepath.Base(repoDir); got != want {
+		t.Errorf("worktree leaf = %q, want %q: TREEHOUSE_UNIQUE_LEAF reached the subprocess", got, want)
+	}
 }
 
 // gitCmd runs a git command and returns trimmed stdout. Fails the test on error.
@@ -392,6 +426,17 @@ func TestInit(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "max_trees") {
 		t.Errorf("treehouse.toml missing max_trees: %s", data)
+	}
+	// The optional keys are documented as commented guidance, never set.
+	for _, key := range []string{"root", "base_branch", "unique_leaf"} {
+		if !strings.Contains(string(data), key+" = ") {
+			t.Errorf("treehouse.toml missing %s guidance: %s", key, data)
+		}
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") && strings.Contains(line, "unique_leaf") {
+			t.Errorf("treehouse.toml should not set unique_leaf: %s", data)
+		}
 	}
 }
 

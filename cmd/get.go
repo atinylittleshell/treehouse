@@ -24,6 +24,7 @@ var (
 	getJSON        bool
 	getNoFetch     bool
 	getBase        string
+	getUniqueLeaf  bool
 )
 
 // Process seams, overridable in tests, matching the pattern in internal/pool.
@@ -49,7 +50,14 @@ Worktrees are cut from the branch treehouse infers from the repository. Pass
 treehouse.toml to change it for the whole pool. The worktree is still handed
 over in detached HEAD; --base chooses the commit it starts at, it does not
 create or check out a branch. A base that cannot be resolved is an error, never
-a silent fall back to the inferred default.`,
+a silent fall back to the inferred default.
+
+Every pool slot normally lives in a directory named after the repository, so
+tooling that derives per-checkout identity from the working directory's last
+path segment sees every slot as the same checkout. Pass --unique-leaf, set
+TREEHOUSE_UNIQUE_LEAF, or set unique_leaf in treehouse.toml to name new slots
+"<repo>-<slot>" instead. It is off by default and applies only to slots
+treehouse creates from now on; worktrees already in the pool keep their paths.`,
 	RunE: getRunE,
 }
 
@@ -60,6 +68,7 @@ func init() {
 	getCmd.Flags().BoolVar(&getNoFetch, "no-fetch", false, "Skip fetching origin before acquiring; use existing local refs")
 	// No -b shorthand: git spells branch creation -b, and this creates nothing.
 	getCmd.Flags().StringVar(&getBase, "base", "", "Branch to cut this worktree from, overriding base_branch in config (default: inferred from the repository)")
+	getCmd.Flags().BoolVar(&getUniqueLeaf, "unique-leaf", false, "Name a newly created worktree directory <repo>-<slot> instead of <repo>, overriding unique_leaf in config")
 	rootCmd.AddCommand(getCmd)
 }
 
@@ -91,14 +100,17 @@ func getRunE(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "warning: failed to update git exclude: %v\n", err)
 	}
 
-	if getLease {
-		return getLeaseRunE(repoRoot, poolDir, cfg)
-	}
-
-	wtPath, err := pool.AcquireWithOptions(repoRoot, poolDir, cfg.MaxTrees, cfg.Hooks.PostCreate, pool.AcquireOptions{
+	acquireOpts := pool.AcquireOptions{
 		SkipFetch:  getNoFetch,
 		BaseBranch: resolveRequestedBase(cfg),
-	})
+		UniqueLeaf: resolveUniqueLeaf(cmd, cfg),
+	}
+
+	if getLease {
+		return getLeaseRunE(repoRoot, poolDir, cfg, acquireOpts)
+	}
+
+	wtPath, err := pool.AcquireWithOptions(repoRoot, poolDir, cfg.MaxTrees, cfg.Hooks.PostCreate, acquireOpts)
 	if err != nil {
 		return err
 	}
@@ -160,6 +172,19 @@ func resolveRequestedBase(cfg config.Config) string {
 	return cfg.BaseBranch
 }
 
+// resolveUniqueLeaf reports whether this invocation gives a newly created
+// worktree a leaf directory unique within the pool: the --unique-leaf flag when
+// the caller typed it, then TREEHOUSE_UNIQUE_LEAF, then unique_leaf from config.
+// Only an explicitly typed flag counts, so `--unique-leaf=false` turns the
+// option off for one acquisition without config having to change.
+func resolveUniqueLeaf(cmd *cobra.Command, cfg config.Config) bool {
+	var flag *bool
+	if cmd.Flags().Changed("unique-leaf") {
+		flag = &getUniqueLeaf
+	}
+	return config.ResolveUniqueLeaf(flag, cfg)
+}
+
 // releaseBaseBranch returns the branch a returned worktree is parked on: the
 // configured base, or "" for the repository default. It reads config rather
 // than this invocation's --base because parking decides what the NEXT acquire
@@ -179,16 +204,13 @@ func releaseBaseBranch(repoRoot string, cfg config.Config) string {
 // getLeaseRunE performs a non-interactive, durable acquire. It writes either the
 // worktree path or the requested JSON allocation to stdout and routes every
 // human-facing message to stderr, keeping both output modes machine-readable.
-func getLeaseRunE(repoRoot, poolDir string, cfg config.Config) error {
+func getLeaseRunE(repoRoot, poolDir string, cfg config.Config, options pool.AcquireOptions) error {
 	holder := getLeaseHolder
 	if holder == "" {
 		holder = os.Getenv("TREEHOUSE_LEASE_HOLDER")
 	}
 
-	lease, err := pool.AcquireLeaseInfoWithOptions(repoRoot, poolDir, cfg.MaxTrees, cfg.Hooks.PostCreate, holder, pool.AcquireOptions{
-		SkipFetch:  getNoFetch,
-		BaseBranch: resolveRequestedBase(cfg),
-	})
+	lease, err := pool.AcquireLeaseInfoWithOptions(repoRoot, poolDir, cfg.MaxTrees, cfg.Hooks.PostCreate, holder, options)
 	if err != nil {
 		return err
 	}

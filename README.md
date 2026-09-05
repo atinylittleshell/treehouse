@@ -145,6 +145,7 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
 
 - **Detached HEAD** — worktrees use detached HEAD mode, reset to whichever of the local or remote default branch is further ahead, avoiding branch name conflicts entirely.
 - **Choosable base branch** — set `base_branch` in `treehouse.toml`, or pass `treehouse get --base <branch>`, to cut worktrees from a branch other than the repository default. Opt-in; unset keeps today's inference. Worktrees stay in detached HEAD — this selects the commit they start at, it does not create or check out a branch.
+- **Unique worktree directory names** — pass `treehouse get --unique-leaf` (or set `unique_leaf` in `treehouse.toml`) to name new slots `<repo>-<slot>` instead of `<repo>`, so tooling that derives per-checkout identity from the directory name tells the slots apart. Opt-in; off keeps today's layout, and existing worktrees are never moved.
 - **No daemon** - all operations are inline CLI commands.
   Pool state is a small on-disk file, written under a lock by each command.
 - **Interactive shell setup** — when opening a subshell on macOS or Linux, `treehouse`, `treehouse get`, and `treehouse enter` start `$SHELL` as an interactive login shell when it resolves to `bash`, `fish`, or `zsh`. Other shells, fallback shells, and Windows use their default invocation. A regular executable that is merely named like a supported shell but does not accept `-i -l` (for example a wrapper script at `/opt/tools/bash`) is an accepted limitation: the resolved basename is the contract, and PATH-identity probing would reject genuine second installs of the same shell.
@@ -184,6 +185,7 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
 | `get`     | `--lease-holder` | Optional label recorded as the lease holder (defaults to `$TREEHOUSE_LEASE_HOLDER`) |
 | `get`     | `--json` | Print `path`, `lease_id`, `lease_holder`, `leased_at`, and `base_branch` as JSON (requires `--lease`) |
 | `get`     | `--base` | Branch to cut this worktree from, overriding `base_branch` in config |
+| `get`     | `--unique-leaf` | Name a newly created worktree directory `<repo>-<slot>` instead of `<repo>`, overriding `unique_leaf` in config |
 | `enter`   | `--print-path` | Print only the worktree's absolute path to stdout instead of opening a subshell (for `cd "$(treehouse enter --print-path 1)"`) |
 | `status`  | `--json` | Print worktree status and lease metadata as JSON |
 | `return`  | `--force` | Clean, reset, and return without prompting |
@@ -348,6 +350,11 @@ max_trees = 16
 # Unset infers it from the repository (see "Base branch" below).
 # base_branch = "develop"
 
+# Optional unique worktree directory names.
+# Names new slots <repo>-<slot> instead of <repo> (see "Unique worktree
+# directory names" below).
+# unique_leaf = true
+
 # Optional version-control backend. Git is the default everywhere; set "jj"
 # to opt in to the experimental Jujutsu backend
 # (see "Version-control backend" below).
@@ -386,6 +393,50 @@ A few things worth knowing:
 - **Returned worktrees are parked on the base they were cut from**, so the pool keeps recycling. `base_branch` wins when it is set; otherwise a slot acquired with `--base` is parked back on that branch. A slot parked elsewhere could not be reused whenever the base is not a descendant of it.
 - **Existing pools migrate on their own.** A slot is recycled onto a newly requested base as long as it carries nothing beyond the base it was cut from; the two bases need no ancestry relation, so a `develop` slot rejoins a plain `treehouse get` and vice versa. A slot holding commits the new base does not contain is still refused, as always.
 - **Git backend only for now.** Under the jj backend an explicit base fails with a clear error rather than silently using the default bookmark.
+
+### Unique worktree directory names
+
+Every pool slot lives at `<pool>/<slot>/<repo>`, so the directory a worktree is checked out in is named after the repository and is the **same for every slot**:
+
+```
+~/.treehouse/myproject-a1b2c3/1/myproject
+~/.treehouse/myproject-a1b2c3/2/myproject
+```
+
+The parent directory (`1`, `2`) already distinguishes them, but tooling that derives per-checkout identity from the *last* path segment cannot see it — a test-harness database name, a Compose project name, a cache key. Two agents working in two slots collide on one identity.
+
+Opt in to a leaf that is unique within the pool:
+
+```sh
+treehouse get --unique-leaf
+export TREEHOUSE_UNIQUE_LEAF=1   # for a shell session
+```
+
+or for the whole pool in `treehouse.toml`:
+
+```toml
+unique_leaf = true
+```
+
+```
+~/.treehouse/myproject-a1b2c3/1/myproject-1
+~/.treehouse/myproject-a1b2c3/2/myproject-2
+```
+
+The resolved value follows the same precedence as `--root` (highest first):
+
+1. The `--unique-leaf` flag (`--unique-leaf=false` turns it off for one acquisition)
+2. The `TREEHOUSE_UNIQUE_LEAF` environment variable
+3. `unique_leaf` in the repo-level `treehouse.toml`
+4. `unique_leaf` in the user-level `~/.config/treehouse/config.toml`
+5. The default, off
+
+A few things worth knowing:
+
+- **It is off by default**, and with it off nothing about the layout changes.
+- **It only names slots treehouse creates from now on.** A worktree already in the pool keeps the path recorded in pool state: turning the option on never moves, renames, or invalidates one. To convert an existing pool, `treehouse destroy` its slots and re-acquire.
+- **The name is stable.** The slot number is part of the leaf, so a slot recycled by a later `get` hands back the same path it had before.
+- **Both layouts coexist in one pool.** Status, prune, destroy, and lease handling read paths from pool state and never assume the leaf, so slots created before and after the opt-in live side by side.
 
 ### Version-control backend (git or Jujutsu)
 
