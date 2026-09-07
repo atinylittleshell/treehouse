@@ -250,8 +250,8 @@ func seedWorktreeWithInventory(repoRoot, worktreePath string, gitEnv []string, t
 		return nil, err
 	}
 
-	// checkout-index uses --force to refresh old seeds, so remove paths tracked
-	// by the destination before building the temporary index.
+	// Source ignore rules do not authorize replacing paths tracked at the
+	// destination, which may be checked out at a different commit.
 	if trackedOutput == nil {
 		trackedOutput, err = gitOutput(worktreePath, nil, "ls-files", "-z")
 		if err != nil {
