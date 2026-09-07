@@ -686,6 +686,8 @@ func TestGetIncludeFileReplacesCommittedManifest(t *testing.T) {
 			}
 			env := []string{"TREEHOUSE_VCS=" + backend}
 			repoDir, homeDir := setupTestRepo(t)
+			// Keep tracked-file byte assertions independent of the host's checkout conversion.
+			gitCmd(t, repoDir, "config", "core.autocrlf", "false")
 			for name, contents := range map[string]string{
 				".gitignore":       "*.seed\n",
 				".worktreeinclude": "default.seed\n",
