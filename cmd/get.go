@@ -25,6 +25,7 @@ var (
 	getJSON        bool
 	getNoFetch     bool
 	getBase        string
+	getIncludeFile string
 )
 
 // Process seams, overridable in tests, matching the pattern in internal/pool.
@@ -50,7 +51,13 @@ Worktrees are cut from the branch treehouse infers from the repository. Pass
 treehouse.toml to change it for the whole pool. The worktree is still handed
 over in detached HEAD; --base chooses the commit it starts at, it does not
 create or check out a branch. A base that cannot be resolved is an error, never
-a silent fall back to the inferred default.`,
+a silent fall back to the inferred default.
+
+Pass --include-file <path> to replace committed .worktreeinclude for this
+acquisition. Relative paths use the current directory; patterns inside the file
+select ignored, untracked files from the main checkout root. A missing or
+unreadable file fails before a worktree is created or reset. An empty file
+seeds nothing. Without the flag, only the committed manifest is used.`,
 	RunE: getRunE,
 }
 
@@ -61,12 +68,23 @@ func init() {
 	getCmd.Flags().BoolVar(&getNoFetch, "no-fetch", false, "Skip fetching origin before acquiring; use existing local refs")
 	// No -b shorthand: git spells branch creation -b, and this creates nothing.
 	getCmd.Flags().StringVar(&getBase, "base", "", "Branch to cut this worktree from, overriding base_branch in config (default: inferred from the repository)")
+	getCmd.Flags().StringVar(&getIncludeFile, "include-file", "", "Replace committed .worktreeinclude with this file (relative to the current directory)")
 	rootCmd.AddCommand(getCmd)
 }
 
 func getRunE(cmd *cobra.Command, args []string) error {
 	if getJSON && !getLease {
 		return fmt.Errorf("--json requires --lease")
+	}
+
+	var manifest []byte
+	if cmd.Flags().Changed("include-file") {
+		// Read once before acquisition can reset the checkout holding this file.
+		var err error
+		manifest, err = os.ReadFile(getIncludeFile)
+		if err != nil {
+			return fmt.Errorf("failed to read include file %q: %w", getIncludeFile, err)
+		}
 	}
 
 	repoRoot, err := vcs.FindRepoRoot()
@@ -93,12 +111,13 @@ func getRunE(cmd *cobra.Command, args []string) error {
 	}
 
 	if getLease {
-		return getLeaseRunE(repoRoot, poolDir, cfg)
+		return getLeaseRunE(repoRoot, poolDir, cfg, manifest)
 	}
 
 	wtPath, err := pool.AcquireWithOptions(repoRoot, poolDir, cfg.MaxTrees, cfg.Hooks.PostCreate, pool.AcquireOptions{
-		SkipFetch:  getNoFetch,
-		BaseBranch: resolveRequestedBase(cfg),
+		SkipFetch:       getNoFetch,
+		BaseBranch:      resolveRequestedBase(cfg),
+		IncludeManifest: manifest,
 	})
 	if err != nil {
 		return err
@@ -202,15 +221,16 @@ func releaseBaseBranch(repoRoot string, cfg config.Config) string {
 // getLeaseRunE performs a non-interactive, durable acquire. It writes either the
 // worktree path or the requested JSON allocation to stdout and routes every
 // human-facing message to stderr, keeping both output modes machine-readable.
-func getLeaseRunE(repoRoot, poolDir string, cfg config.Config) error {
+func getLeaseRunE(repoRoot, poolDir string, cfg config.Config, manifest []byte) error {
 	holder := getLeaseHolder
 	if holder == "" {
 		holder = os.Getenv("TREEHOUSE_LEASE_HOLDER")
 	}
 
 	lease, err := pool.AcquireLeaseInfoWithOptions(repoRoot, poolDir, cfg.MaxTrees, cfg.Hooks.PostCreate, holder, pool.AcquireOptions{
-		SkipFetch:  getNoFetch,
-		BaseBranch: resolveRequestedBase(cfg),
+		SkipFetch:       getNoFetch,
+		BaseBranch:      resolveRequestedBase(cfg),
+		IncludeManifest: manifest,
 	})
 	if err != nil {
 		return err

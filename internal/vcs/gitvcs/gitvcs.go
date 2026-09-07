@@ -219,21 +219,20 @@ func PruneWorktrees(repoRoot string) error {
 	return err
 }
 
-// SeedWorktree copies ignored files selected by the committed .worktreeinclude
-// at the destination worktree's HEAD. A dirty or untracked working-tree copy
-// in the source checkout is ignored; a missing committed file is a no-op.
-func SeedWorktree(repoRoot, worktreePath string) error {
-	_, err := SeedWorktreeWithInventory(repoRoot, worktreePath)
+// SeedWorktree copies ignored files selected by manifest, or by the committed
+// .worktreeinclude at the destination HEAD when manifest is nil.
+func SeedWorktree(repoRoot, worktreePath string, manifest []byte) error {
+	_, err := SeedWorktreeWithInventory(repoRoot, worktreePath, manifest)
 	return err
 }
 
 // SeedWorktreeWithInventory returns the paths it copied so the pool can remove
 // them later without trusting mutable content in the acquired worktree.
-func SeedWorktreeWithInventory(repoRoot, worktreePath string) ([]string, error) {
-	return seedWorktreeWithInventory(repoRoot, worktreePath, nil, nil, "")
+func SeedWorktreeWithInventory(repoRoot, worktreePath string, manifest []byte) ([]string, error) {
+	return seedWorktreeWithInventory(repoRoot, worktreePath, nil, nil, "", manifest)
 }
 
-func SeedWorktreeWithInventoryFromGitStore(repoRoot, worktreePath, gitDir, ref string) ([]string, error) {
+func SeedWorktreeWithInventoryFromGitStore(repoRoot, worktreePath, gitDir, ref string, manifest []byte) ([]string, error) {
 	env := append(os.Environ(), "GIT_DIR="+gitDir, "GIT_WORK_TREE="+repoRoot)
 	trackedOutput, err := gitOutputEnv(repoRoot, env, nil, "ls-tree", "-rz", "--name-only", ref)
 	if err != nil {
@@ -242,17 +241,17 @@ func SeedWorktreeWithInventoryFromGitStore(repoRoot, worktreePath, gitDir, ref s
 	if trackedOutput == nil {
 		trackedOutput = []byte{}
 	}
-	return seedWorktreeWithInventory(repoRoot, worktreePath, env, trackedOutput, ref)
+	return seedWorktreeWithInventory(repoRoot, worktreePath, env, trackedOutput, ref, manifest)
 }
 
-func seedWorktreeWithInventory(repoRoot, worktreePath string, gitEnv []string, trackedOutput []byte, manifestRef string) ([]string, error) {
-	selected, err := selectedSeedPathsEnv(repoRoot, worktreePath, gitEnv, manifestRef)
+func seedWorktreeWithInventory(repoRoot, worktreePath string, gitEnv []string, trackedOutput []byte, manifestRef string, manifest []byte) ([]string, error) {
+	selected, err := selectedSeedPathsEnv(repoRoot, worktreePath, gitEnv, manifestRef, manifest)
 	if err != nil || len(selected) == 0 {
 		return nil, err
 	}
 
-	// checkout-index uses --force to refresh old seeds, so remove paths tracked
-	// by the destination before building the temporary index.
+	// Source ignore rules do not authorize replacing paths tracked at the
+	// destination, which may be checked out at a different commit.
 	if trackedOutput == nil {
 		trackedOutput, err = gitOutput(worktreePath, nil, "ls-files", "-z")
 		if err != nil {
@@ -405,10 +404,17 @@ func worktreeCaseInsensitive(worktreePath string) (bool, error) {
 
 const worktreeIncludeName = ".worktreeinclude"
 
-func selectedSeedPathsEnv(repoRoot, worktreePath string, gitEnv []string, manifestRef string) ([]byte, error) {
-	manifest, err := committedWorktreeInclude(repoRoot, worktreePath, gitEnv, manifestRef)
-	if err != nil || len(manifest) == 0 {
-		return nil, err
+func selectedSeedPathsEnv(repoRoot, worktreePath string, gitEnv []string, manifestRef string, manifest []byte) ([]byte, error) {
+	// An explicitly empty override must not fall back to repository selections.
+	if manifest == nil {
+		var err error
+		manifest, err = committedWorktreeInclude(repoRoot, worktreePath, gitEnv, manifestRef)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(manifest) == 0 {
+		return nil, nil
 	}
 	return selectedSeedPathsWithManifestEnv(repoRoot, manifest, gitEnv)
 }
@@ -1220,8 +1226,8 @@ func (*Backend) GetRemoteURL(repoRoot string) (string, error) { return GetRemote
 func (*Backend) AddWorktree(repoRoot, path, branch string) error {
 	return AddWorktree(repoRoot, path, branch)
 }
-func (*Backend) SeedWorktree(repoRoot, worktreePath string) ([]string, error) {
-	return SeedWorktreeWithInventory(repoRoot, worktreePath)
+func (*Backend) SeedWorktree(repoRoot, worktreePath string, manifest []byte) ([]string, error) {
+	return SeedWorktreeWithInventory(repoRoot, worktreePath, manifest)
 }
 func (*Backend) PruneWorktrees(repoRoot string) error { return PruneWorktrees(repoRoot) }
 func (*Backend) RemoveWorktree(repoRoot, path string) error {

@@ -219,6 +219,62 @@ func TestAcquire_SeedsWorktreeIncludeOnCreateAndReuse(t *testing.T) {
 	assertFileContents(t, filepath.Join(reused, ".env"), "second\n")
 }
 
+func TestAcquire_ManifestOverrideRefreshesAndRemovesSeedsOnReuse(t *testing.T) {
+	repoDir, poolDir := setupLocalRepo(t)
+	for name, contents := range map[string]string{
+		".gitignore":       "*.seed\n",
+		".worktreeinclude": "default.seed\n",
+		"default.seed":     "default\n",
+		"local.seed":       "first\n",
+	} {
+		if err := os.WriteFile(filepath.Join(repoDir, name), []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit(t, repoDir, "add", ".gitignore", ".worktreeinclude")
+	runGit(t, repoDir, "commit", "-m", "configure seeds")
+	options := AcquireOptions{IncludeManifest: []byte("local.seed\n")}
+	wtPath, err := AcquireWithOptions(repoDir, poolDir, 1, nil, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileContents(t, filepath.Join(wtPath, "local.seed"), "first\n")
+	if _, err := os.Stat(filepath.Join(wtPath, "default.seed")); !os.IsNotExist(err) {
+		t.Fatalf("override did not replace committed selection: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wtPath, "unmanaged.seed"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "local.seed"), []byte("second\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an exited owner without return so reuse must clean old seeds itself.
+	clearOwnerReservation(t, poolDir, wtPath)
+	reused, err := AcquireWithOptions(repoDir, poolDir, 1, nil, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused != wtPath {
+		t.Fatalf("acquired %s, want reused %s", reused, wtPath)
+	}
+	assertFileContents(t, filepath.Join(reused, "local.seed"), "second\n")
+
+	clearOwnerReservation(t, poolDir, wtPath)
+	empty, err := AcquireWithOptions(repoDir, poolDir, 1, nil, AcquireOptions{IncludeManifest: []byte{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty != wtPath {
+		t.Fatalf("acquired %s, want reused %s", empty, wtPath)
+	}
+	for _, name := range []string{"local.seed", "default.seed"} {
+		if _, err := os.Stat(filepath.Join(empty, name)); !os.IsNotExist(err) {
+			t.Fatalf("empty override left %s: %v", name, err)
+		}
+	}
+	assertFileContents(t, filepath.Join(empty, "unmanaged.seed"), "keep\n")
+}
+
 func TestAcquire_IgnoresDirtyAndUntrackedWorktreeInclude(t *testing.T) {
 	repoDir, poolDir := setupLocalRepo(t)
 	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte("*.env\n"), 0o644); err != nil {
@@ -729,7 +785,7 @@ func TestAcquire_QuarantinesReusedWorktreeAfterPartialSeedFailure(t *testing.T) 
 		t.Fatal(err)
 	}
 	oldSeedWorktree := seedWorktree
-	seedWorktree = func(_ string, path string) ([]string, error) {
+	seedWorktree = func(_ string, path string, _ []byte) ([]string, error) {
 		if err := os.WriteFile(filepath.Join(path, "partial.env"), []byte("partial\n"), 0o644); err != nil {
 			return nil, err
 		}
@@ -771,7 +827,7 @@ func TestAcquire_RemovesPartialSeedsWhenQuarantineWriteFails(t *testing.T) {
 	}
 
 	oldSeedWorktree := seedWorktree
-	seedWorktree = func(_ string, path string) ([]string, error) {
+	seedWorktree = func(_ string, path string, _ []byte) ([]string, error) {
 		if err := os.WriteFile(filepath.Join(path, "partial.env"), []byte("partial\n"), 0o644); err != nil {
 			return nil, err
 		}
@@ -803,7 +859,7 @@ func TestAcquire_QuarantinesNewWorktreeWhenSeedCleanupFails(t *testing.T) {
 	repoDir, poolDir := setupLocalRepo(t)
 	oldSeedWorktree := seedWorktree
 	oldRemoveWorktree := removeWorktree
-	seedWorktree = func(string, string) ([]string, error) { return nil, errors.New("seeding failed") }
+	seedWorktree = func(string, string, []byte) ([]string, error) { return nil, errors.New("seeding failed") }
 	removeWorktree = func(string, string) error { return errors.New("cleanup failed") }
 	t.Cleanup(func() {
 		seedWorktree = oldSeedWorktree
@@ -857,11 +913,11 @@ func TestAcquire_SeedingDoesNotFollowWorktreeSymlinks(t *testing.T) {
 	}
 	seeded := filepath.Join(wtPath, ".env")
 	oldSeedWorktree := seedWorktree
-	seedWorktree = func(repoRoot, path string) ([]string, error) {
+	seedWorktree = func(repoRoot, path string, manifest []byte) ([]string, error) {
 		if err := os.Symlink(sentinel, filepath.Join(path, ".env")); err != nil {
 			return nil, err
 		}
-		return oldSeedWorktree(repoRoot, path)
+		return oldSeedWorktree(repoRoot, path, manifest)
 	}
 	t.Cleanup(func() { seedWorktree = oldSeedWorktree })
 

@@ -59,10 +59,11 @@ type Backend interface {
 	GetRemoteURL(repoRoot string) (string, error)
 	// AddWorktree creates a new worktree at path based on branch.
 	AddWorktree(repoRoot, path, branch string) error
-	// SeedWorktree copies backend-specific ignored files into a new worktree
-	// and returns their paths so they can be removed without trusting mutable
-	// worktree metadata.
-	SeedWorktree(repoRoot, worktreePath string) ([]string, error)
+	// SeedWorktree copies backend-specific ignored files into a new or recycled
+	// worktree and returns their paths so cleanup need not trust mutable worktree
+	// metadata. A nil manifest uses committed .worktreeinclude at the destination
+	// HEAD; a non-nil manifest replaces it, with an empty slice selecting nothing.
+	SeedWorktree(repoRoot, worktreePath string, manifest []byte) ([]string, error)
 	// PruneWorktrees clears bookkeeping for worktrees whose directories no
 	// longer exist. It never touches live worktrees or their data.
 	PruneWorktrees(repoRoot string) error
@@ -414,9 +415,9 @@ func ResetWorktreeWithSeededPaths(worktreePath, branch string, seededPaths []str
 	return b.ResetWorktreeWithSeededPaths(worktreePath, branch, seededPaths)
 }
 
-// SeedWorktree copies backend-specific ignored files into a new worktree.
-func SeedWorktree(repoRoot, worktreePath string) ([]string, error) {
-	return backendFor(repoRoot).SeedWorktree(repoRoot, worktreePath)
+// SeedWorktree delegates to Backend.SeedWorktree with the supplied manifest.
+func SeedWorktree(repoRoot, worktreePath string, manifest []byte) ([]string, error) {
+	return backendFor(repoRoot).SeedWorktree(repoRoot, worktreePath, manifest)
 }
 
 func JJSeedAuthenticationIdentity(worktreePath string) (string, error) {

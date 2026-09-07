@@ -17,7 +17,7 @@ func TestSeedWorktreeSkipsFIFOWithoutBlocking(t *testing.T) {
 	}
 
 	result := make(chan error, 1)
-	go func() { result <- SeedWorktree(repo, worktree) }()
+	go func() { result <- SeedWorktree(repo, worktree, nil) }()
 	select {
 	case err := <-result:
 		if err != nil {
