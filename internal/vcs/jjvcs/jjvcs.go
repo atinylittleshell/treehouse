@@ -190,13 +190,17 @@ func (b *Backend) AddWorktree(repoRoot, path, branch string) error {
 	return makeRepoPointerAbsolute(absPath)
 }
 
-func (*Backend) SeedWorktree(repoRoot, worktreePath string) ([]string, error) {
+func (*Backend) SeedWorktree(repoRoot, worktreePath string, manifest []byte) ([]string, error) {
 	head, err := worktreeHead(worktreePath)
 	if err != nil {
 		return nil, err
 	}
-	gitDir := filepath.Join(repoRoot, ".jj", "repo", "store", "git")
-	seeded, err := gitvcs.SeedWorktreeWithInventoryFromGitStore(repoRoot, worktreePath, gitDir, head)
+	// Colocated repositories keep their Git store outside .jj.
+	gitDir, err := runJJ(repoRoot, "git", "root", "--ignore-working-copy")
+	if err != nil {
+		return nil, err
+	}
+	seeded, err := gitvcs.SeedWorktreeWithInventoryFromGitStore(repoRoot, worktreePath, gitDir, head, manifest)
 	if err != nil || len(seeded) == 0 {
 		return seeded, err
 	}

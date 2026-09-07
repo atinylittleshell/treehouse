@@ -592,7 +592,7 @@ func TestSeedWorktreeUsesGitExcludePatterns(t *testing.T) {
 				writeTestFile(t, repo, name, name+"\n")
 			}
 
-			if err := SeedWorktree(repo, worktree); err != nil {
+			if err := SeedWorktree(repo, worktree, nil); err != nil {
 				t.Fatal(err)
 			}
 			for _, name := range tt.want {
@@ -615,7 +615,7 @@ func TestSeedWorktreeCopiesOnlyManifestSelections(t *testing.T) {
 	writeTestFile(t, repo, "selected.env", "selected\n")
 	writeTestFile(t, repo, "unrelated.secret", "secret\n")
 
-	if err := SeedWorktree(repo, worktree); err != nil {
+	if err := SeedWorktree(repo, worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertTestFile(t, worktree, "selected.env", "selected\n")
@@ -632,7 +632,7 @@ func TestSeedWorktreeDoesNotCopyManifestSelectedUnignoredFile(t *testing.T) {
 	writeTestFile(t, repo, "selected.env", "selected\n")
 	writeTestFile(t, repo, "credentials.txt", "credentials\n")
 
-	if err := SeedWorktree(repo, worktree); err != nil {
+	if err := SeedWorktree(repo, worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertTestFile(t, worktree, "selected.env", "selected\n")
@@ -651,7 +651,7 @@ func TestSeedWorktreeFlattensSourceSymlink(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	if err := SeedWorktree(repo, worktree); err != nil {
+	if err := SeedWorktree(repo, worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	seeded := filepath.Join(worktree, "linked.env")
@@ -673,7 +673,7 @@ func TestSeedWorktreePreservesPrivatePermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := SeedWorktree(repo, worktree); err != nil {
+	if err := SeedWorktree(repo, worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(filepath.Join(worktree, "private.env"))
@@ -698,7 +698,7 @@ func TestSeedWorktreeDoesNotExecuteGitFilters(t *testing.T) {
 	mustGit(t, repo, "config", "filter.seed-test.smudge", "cat")
 	writeTestFile(t, repo, "filtered.env", "source\n")
 
-	if err := SeedWorktree(repo, worktree); err != nil {
+	if err := SeedWorktree(repo, worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertTestFile(t, worktree, "filtered.env", "source\n")
@@ -713,7 +713,7 @@ func TestSeedWorktreeDoesNotCopyFilesIgnoredOutsideManifest(t *testing.T) {
 	writeTestFile(t, repo, "selected.env", "selected\n")
 	writeTestFile(t, repo, "unselected.env", "unselected\n")
 
-	if err := SeedWorktree(repo, worktree); err != nil {
+	if err := SeedWorktree(repo, worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertTestFile(t, worktree, "selected.env", "selected\n")
@@ -750,7 +750,7 @@ func TestSeedWorktreeHonorsCaseInsensitiveTrackedPathsWhenGitConfigIsFalse(t *te
 	}
 	mustGit(t, worktree, "config", "core.ignoreCase", "false")
 
-	if err := SeedWorktree(repo, worktree); err != nil {
+	if err := SeedWorktree(repo, worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertGitCheckoutFile(t, worktree, "Config.env", "tracked\n")
@@ -780,7 +780,7 @@ func TestSeedWorktreePreservesTrackedAncestor(t *testing.T) {
 	writeTestFile(t, repo, "config/settings.env", "ignored\n")
 	mustGit(t, repo, "worktree", "add", "--detach", worktree, "main")
 
-	if err := SeedWorktree(repo, worktree); err != nil {
+	if err := SeedWorktree(repo, worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertGitCheckoutFile(t, worktree, "config", "tracked\n")
@@ -810,7 +810,7 @@ func TestSeedWorktreePreservesTrackedDescendant(t *testing.T) {
 	writeTestFile(t, repo, "config", "ignored\n")
 	mustGit(t, repo, "worktree", "add", "--detach", worktree, "main")
 
-	if err := SeedWorktree(repo, worktree); err != nil {
+	if err := SeedWorktree(repo, worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertGitCheckoutFile(t, worktree, "config/settings.json", "tracked\n")
@@ -824,7 +824,7 @@ func TestSeedWorktreePreservesTrackedDescendant(t *testing.T) {
 func TestResetWorktreeRemovesSeedHiddenByModifiedManifest(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "secret.env\n")
 	writeTestFile(t, repo, "secret.env", "secret\n")
-	if err := SeedWorktree(repo, worktree); err != nil {
+	if err := SeedWorktree(repo, worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	writeTestFile(t, worktree, ".worktreeinclude", "")
@@ -840,7 +840,7 @@ func TestResetWorktreeRemovesSeedHiddenByModifiedManifest(t *testing.T) {
 func TestResetWorktreeRemovesInventoriedSeedWhenCurrentRevisionDoesNotIgnoreIt(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "secret.env\n")
 	writeTestFile(t, repo, "secret.env", "secret\n")
-	if err := SeedWorktree(repo, worktree); err != nil {
+	if err := SeedWorktree(repo, worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	writeTestFile(t, worktree, ".gitignore", "other.env\n")
@@ -876,7 +876,7 @@ func TestEmptySeedInventoryPreservesUnignoredManifestSelection(t *testing.T) {
 func TestSeedInventoryRemovesSeedWhoseSourceWasDeleted(t *testing.T) {
 	repo, worktree := setupSeedWorktree(t, "secret.env\n")
 	writeTestFile(t, repo, "secret.env", "secret\n")
-	if err := SeedWorktree(repo, worktree); err != nil {
+	if err := SeedWorktree(repo, worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(repo, "secret.env")); err != nil {
@@ -1167,7 +1167,7 @@ func TestSeedWorktreeRefusesDestinationSymlink(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	if err := SeedWorktree(repo, worktree); err == nil {
+	if err := SeedWorktree(repo, worktree, nil); err == nil {
 		t.Fatal("expected destination symlink to reject seeding")
 	}
 	if _, err := os.Stat(filepath.Join(outside, "settings.env")); !os.IsNotExist(err) {
@@ -1180,7 +1180,7 @@ func TestSeedWorktreeRefusesToOverwriteUnmanagedDestination(t *testing.T) {
 	writeTestFile(t, repo, "secret.env", "seeded\n")
 	writeTestFile(t, worktree, "secret.env", "local\n")
 
-	if err := SeedWorktree(repo, worktree); err == nil {
+	if err := SeedWorktree(repo, worktree, nil); err == nil {
 		t.Fatal("expected existing unmanaged file to reject seeding")
 	}
 	assertTestFile(t, worktree, "secret.env", "local\n")
@@ -1191,7 +1191,7 @@ func TestSeedWorktreeRefusesToOverwriteUnmanagedAncestor(t *testing.T) {
 	writeTestFile(t, repo, "config/secret.env", "seeded\n")
 	writeTestFile(t, worktree, "config", "local\n")
 
-	if err := SeedWorktree(repo, worktree); err == nil {
+	if err := SeedWorktree(repo, worktree, nil); err == nil {
 		t.Fatal("expected existing unmanaged ancestor to reject seeding")
 	}
 	assertTestFile(t, worktree, "config", "local\n")
@@ -1204,7 +1204,7 @@ func TestSeedWorktreeRejectsSymlinkedRoot(t *testing.T) {
 	if err := os.Symlink(worktree, alias); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if err := SeedWorktree(repo, alias); err == nil {
+	if err := SeedWorktree(repo, alias, nil); err == nil {
 		t.Fatal("expected symlinked worktree root to be rejected")
 	}
 }
@@ -1287,7 +1287,7 @@ func TestSeedWorktreeIgnoresUntrackedManifest(t *testing.T) {
 	writeTestFile(t, repo, ".worktreeinclude", "secret.env\n")
 	writeTestFile(t, repo, "secret.env", "secret\n")
 
-	if err := SeedWorktree(repo, worktree); err != nil {
+	if err := SeedWorktree(repo, worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(worktree, "secret.env")); !os.IsNotExist(err) {
@@ -1301,7 +1301,7 @@ func TestSeedWorktreeIgnoresDirtyCommittedManifest(t *testing.T) {
 	writeTestFile(t, repo, "extra.env", "extra\n")
 	writeTestFile(t, repo, ".worktreeinclude", "selected.env\nextra.env\n")
 
-	if err := SeedWorktree(repo, worktree); err != nil {
+	if err := SeedWorktree(repo, worktree, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertTestFile(t, worktree, "selected.env", "selected\n")

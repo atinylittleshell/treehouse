@@ -187,9 +187,10 @@ func TestSeedWorktreeCopiesIgnoredManifestSelection(t *testing.T) {
 	writeFile(t, filepath.Join(repoDir, ".worktreeinclude"), "selected.env\n")
 	writeFile(t, filepath.Join(repoDir, "selected.env"), "secret\n")
 	mustJJ(t, repoDir, "commit", "-m", "add seed manifest")
+	mustJJ(t, repoDir, "bookmark", "set", "main", "-r", "@-")
 	wtPath := addWorkspace(t, repoDir)
 
-	seeded, err := New().SeedWorktree(repoDir, wtPath)
+	seeded, err := New().SeedWorktree(repoDir, wtPath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,16 +203,53 @@ func TestSeedWorktreeCopiesIgnoredManifestSelection(t *testing.T) {
 	}
 }
 
+func TestSeedWorktreeManifestOverrideAndCleanup(t *testing.T) {
+	requireJJ(t)
+	repoDir := newLocalRepo(t)
+	writeFile(t, filepath.Join(repoDir, ".gitignore"), "*.seed\n")
+	writeFile(t, filepath.Join(repoDir, ".worktreeinclude"), "default.seed\n")
+	writeFile(t, filepath.Join(repoDir, "default.seed"), "default\n")
+	writeFile(t, filepath.Join(repoDir, "local.seed"), "local\n")
+	mustJJ(t, repoDir, "commit", "-m", "configure seeds")
+	mustJJ(t, repoDir, "bookmark", "set", "main", "-r", "@-")
+	wtPath := addWorkspace(t, repoDir)
+
+	seeded, err := New().SeedWorktree(repoDir, wtPath, []byte("local.seed\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(wtPath, "local.seed"))
+	if err != nil || string(data) != "local\n" {
+		t.Fatalf("override seed = %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(wtPath, "default.seed")); !os.IsNotExist(err) {
+		t.Fatalf("override did not replace committed selection: %v", err)
+	}
+	if err := New().ResetWorktreeWithSeededPaths(wtPath, "main", seeded); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(wtPath, "local.seed")); !os.IsNotExist(err) {
+		t.Fatalf("override seed survived authenticated cleanup: %v", err)
+	}
+	if _, err := New().SeedWorktree(repoDir, wtPath, []byte{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(wtPath, "default.seed")); !os.IsNotExist(err) {
+		t.Fatalf("empty override fell back to committed selection: %v", err)
+	}
+}
+
 func TestSeedWorktreeIgnoresUntrackedManifest(t *testing.T) {
 	requireJJ(t)
 	repoDir := newLocalRepo(t)
 	writeFile(t, filepath.Join(repoDir, ".gitignore"), "*.env\n")
 	writeFile(t, filepath.Join(repoDir, "secret.env"), "secret\n")
 	mustJJ(t, repoDir, "commit", "-m", "no manifest")
+	mustJJ(t, repoDir, "bookmark", "set", "main", "-r", "@-")
 	writeFile(t, filepath.Join(repoDir, ".worktreeinclude"), "secret.env\n")
 	wtPath := addWorkspace(t, repoDir)
 
-	seeded, err := New().SeedWorktree(repoDir, wtPath)
+	seeded, err := New().SeedWorktree(repoDir, wtPath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,10 +269,11 @@ func TestSeedWorktreeIgnoresDirtyCommittedManifest(t *testing.T) {
 	writeFile(t, filepath.Join(repoDir, "selected.env"), "selected\n")
 	writeFile(t, filepath.Join(repoDir, "extra.env"), "extra\n")
 	mustJJ(t, repoDir, "commit", "-m", "add seed manifest")
+	mustJJ(t, repoDir, "bookmark", "set", "main", "-r", "@-")
 	writeFile(t, filepath.Join(repoDir, ".worktreeinclude"), "selected.env\nextra.env\n")
 	wtPath := addWorkspace(t, repoDir)
 
-	seeded, err := New().SeedWorktree(repoDir, wtPath)
+	seeded, err := New().SeedWorktree(repoDir, wtPath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,12 +292,13 @@ func TestSeedWorktreePreservesInventoryWhenAuthenticationFails(t *testing.T) {
 	writeFile(t, filepath.Join(repoDir, ".worktreeinclude"), "selected.env\n")
 	writeFile(t, filepath.Join(repoDir, "selected.env"), "secret\n")
 	mustJJ(t, repoDir, "commit", "-m", "add seed manifest")
+	mustJJ(t, repoDir, "bookmark", "set", "main", "-r", "@-")
 	worktree := addWorkspace(t, repoDir)
 	oldPrepare := prepareJJSeededCleanup
 	prepareJJSeededCleanup = func(string) error { return errors.New("authentication failed") }
 	t.Cleanup(func() { prepareJJSeededCleanup = oldPrepare })
 
-	seeded, err := New().SeedWorktree(repoDir, worktree)
+	seeded, err := New().SeedWorktree(repoDir, worktree, nil)
 	if err == nil {
 		t.Fatal("expected authentication failure")
 	}

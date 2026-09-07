@@ -62,7 +62,7 @@ type Backend interface {
 	// SeedWorktree copies backend-specific ignored files into a new worktree
 	// and returns their paths so they can be removed without trusting mutable
 	// worktree metadata.
-	SeedWorktree(repoRoot, worktreePath string) ([]string, error)
+	SeedWorktree(repoRoot, worktreePath string, manifest []byte) ([]string, error)
 	// PruneWorktrees clears bookkeeping for worktrees whose directories no
 	// longer exist. It never touches live worktrees or their data.
 	PruneWorktrees(repoRoot string) error
@@ -415,8 +415,8 @@ func ResetWorktreeWithSeededPaths(worktreePath, branch string, seededPaths []str
 }
 
 // SeedWorktree copies backend-specific ignored files into a new worktree.
-func SeedWorktree(repoRoot, worktreePath string) ([]string, error) {
-	return backendFor(repoRoot).SeedWorktree(repoRoot, worktreePath)
+func SeedWorktree(repoRoot, worktreePath string, manifest []byte) ([]string, error) {
+	return backendFor(repoRoot).SeedWorktree(repoRoot, worktreePath, manifest)
 }
 
 func JJSeedAuthenticationIdentity(worktreePath string) (string, error) {

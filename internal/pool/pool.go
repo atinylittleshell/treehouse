@@ -68,6 +68,9 @@ type AcquireOptions struct {
 	// branch inferred from the repository. A non-empty value that cannot be
 	// resolved fails the acquisition rather than falling back.
 	BaseBranch string
+	// IncludeManifest replaces the committed manifest; nil keeps the default,
+	// while a non-nil empty slice explicitly disables seeding.
+	IncludeManifest []byte
 }
 
 // acquireOptions controls how Acquire reserves the worktree it hands out.
@@ -75,7 +78,8 @@ type acquireOptions struct {
 	// skipFetch uses existing local refs without contacting origin.
 	skipFetch bool
 	// baseBranch is the explicitly requested base branch, or empty to infer it.
-	baseBranch string
+	baseBranch      string
+	includeManifest []byte
 	// lease records a durable, process-independent reservation instead of the
 	// default short-lived owner reservation.
 	lease bool
@@ -97,10 +101,11 @@ func Acquire(repoRoot, poolDir string, poolSize int, postCreate []string) (strin
 // AcquireWithOptions reserves a clean worktree with optional acquisition behavior.
 func AcquireWithOptions(repoRoot, poolDir string, poolSize int, postCreate []string, options AcquireOptions) (string, error) {
 	acquired, err := acquire(repoRoot, poolDir, poolSize, postCreate, acquireOptions{
-		skipFetch:  options.SkipFetch,
-		baseBranch: options.BaseBranch,
-		hookStdout: os.Stdout,
-		hookStderr: os.Stderr,
+		skipFetch:       options.SkipFetch,
+		baseBranch:      options.BaseBranch,
+		includeManifest: options.IncludeManifest,
+		hookStdout:      os.Stdout,
+		hookStderr:      os.Stderr,
 	})
 	return acquired.Path, err
 }
@@ -124,12 +129,13 @@ func AcquireLeaseInfo(repoRoot, poolDir string, poolSize int, postCreate []strin
 // AcquireLeaseInfoWithOptions reserves a durable lease with optional acquisition behavior.
 func AcquireLeaseInfoWithOptions(repoRoot, poolDir string, poolSize int, postCreate []string, holder string, options AcquireOptions) (LeaseInfo, error) {
 	return acquire(repoRoot, poolDir, poolSize, postCreate, acquireOptions{
-		skipFetch:   options.SkipFetch,
-		baseBranch:  options.BaseBranch,
-		lease:       true,
-		leaseHolder: holder,
-		hookStdout:  os.Stderr,
-		hookStderr:  os.Stderr,
+		skipFetch:       options.SkipFetch,
+		baseBranch:      options.BaseBranch,
+		includeManifest: options.IncludeManifest,
+		lease:           true,
+		leaseHolder:     holder,
+		hookStdout:      os.Stderr,
+		hookStderr:      os.Stderr,
 	})
 }
 
@@ -345,7 +351,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 			}
 			// Keep partial ignored files away from later acquisitions until a
 			// human verifies and explicitly returns the worktree.
-			seededPaths, err = seedWorktree(repoRoot, wt.Path)
+			seededPaths, err = seedWorktree(repoRoot, wt.Path, opts.includeManifest)
 			if err != nil {
 				// Remove every path the failed seed operation reports before relying
 				// on another state write to preserve that partial inventory.
@@ -425,7 +431,7 @@ func acquire(repoRoot, poolDir string, poolSize int, postCreate []string, opts a
 		if err := vcs.AddWorktree(repoRoot, wtPath, branch); err != nil {
 			return fmt.Errorf("failed to create worktree: %w", err)
 		}
-		seededPaths, err := seedWorktree(repoRoot, wtPath)
+		seededPaths, err := seedWorktree(repoRoot, wtPath, opts.includeManifest)
 		if err != nil {
 			// A failed removal leaves a real Git worktree behind. Keep it in
 			// state as quarantined so later acquisitions cannot reuse its slot.

@@ -152,7 +152,7 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
 - **Durable leases** - `treehouse get --lease` reserves a worktree as a persistent home without keeping a process inside it. Each acquisition gets an immutable random lease identity, and the lease is recorded in treehouse's own state. The worktree is never handed out by a later `get` and never removed by `prune` until you release it with `treehouse return`. Unlike process-based in-use detection, a lease survives with zero processes running inside the worktree.
 - **State recovery** - treehouse writes pool state atomically via a temp file and replacement.
   If an existing state file is empty, truncated, or omits an on-disk worktree, treehouse rebuilds the missing entries and quarantines them for inspection and explicit destruction. See [Recovering missing pool state](#recovering-missing-pool-state).
-- **Gitignored file seeding** — commit a `.worktreeinclude` file to copy selected local files from the main checkout on every acquire. See [Seeding gitignored files](#seeding-gitignored-files).
+- **Gitignored file seeding** — commit a `.worktreeinclude` file for the default selection, or pass `get --include-file <path>` for a personal manifest. Selected local files are copied from the main checkout on each acquire. See [Seeding gitignored files](#seeding-gitignored-files).
 - **Dirty detection** - treehouse treats tracked changes and untracked files as dirty, even when repository config hides untracked files from normal `git status` output.
 - **Safe pruning** - By default, `treehouse prune` removes only idle managed worktrees whose HEAD is already merged into the default branch and whose working tree is clean.
   `treehouse prune --all` applies the same safety checks across every managed pool under the user-level treehouse root.
@@ -186,6 +186,7 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
 | `get`     | `--lease-holder` | Optional label recorded as the lease holder (defaults to `$TREEHOUSE_LEASE_HOLDER`) |
 | `get`     | `--json` | Print `path`, `lease_id`, `lease_holder`, `leased_at`, and `base_branch` as JSON (requires `--lease`) |
 | `get`     | `--base` | Branch to cut this worktree from, overriding `base_branch` in config |
+| `get`     | `--include-file` | Replace committed `.worktreeinclude` for this acquisition with the supplied manifest |
 | `lease`   | `--lease-holder` | Optional label recorded as the lease holder (defaults to `$TREEHOUSE_LEASE_HOLDER`) |
 | `lease`   | `--json` | Print `path`, `lease_id`, `lease_holder`, `leased_at`, and `base_branch` as JSON (`base_branch` is best-effort: empty when the slot records no explicit base and its own worktree cannot resolve a default) |
 | `enter`   | `--print-path` | Print only the worktree's absolute path to stdout instead of opening a subshell (for `cd "$(treehouse enter --print-path 1)"`) |
@@ -206,15 +207,26 @@ You can instead keep the pool [inside the project](#in-project-storage) with `--
 
 ### Seeding gitignored files
 
-Commit a `.worktreeinclude` file to seed selected gitignored files from the main checkout into each acquired Git worktree or jj workspace. This is useful for local configuration or generated files that every worktree needs but Git should not track. Only the committed file at the worktree's HEAD is used; a dirty or untracked `.worktreeinclude` in the main checkout is ignored, and a missing committed file is a no-op.
+Commit a `.worktreeinclude` file to seed selected gitignored files from the main checkout into each acquired Git worktree or jj workspace. This is useful for local configuration or generated files that every worktree needs but Git should not track. By default, only the committed file at the worktree's HEAD is used; a dirty or untracked `.worktreeinclude` in the main checkout is ignored, and a missing committed file is a no-op.
 
-`.worktreeinclude` uses `.gitignore` pattern syntax. A file must be ignored by the repository and selected by `.worktreeinclude`; tracked files and unignored untracked files are never copied. Use `!` to exclude a broader match:
+Manifests use `.gitignore` pattern syntax. A file must be ignored by the repository and selected by the manifest; tracked files and unignored untracked files are never copied. Use `!` to exclude a broader match:
 
 ```gitignore
 .env*
 !.env.local
 local-config/
 ```
+
+For a personal selection that does not need to be committed, pass an explicit manifest:
+
+```sh
+treehouse get --include-file ./personal.include
+treehouse get --lease --include-file ./personal.include
+```
+
+The supplied manifest **replaces**, rather than extends, committed `.worktreeinclude` for this acquisition, on both new and reused slots. The manifest may be tracked, untracked, or ignored. Relative manifest paths resolve from your current directory; patterns inside the file always select files relative to the main checkout root, not the manifest's directory. There is no config setting or environment variable for this override.
+
+Treehouse reads the supplied file once before acquisition. A missing or unreadable file is an error before any slot is created or reset, with no fallback to the committed manifest. An empty file seeds nothing. Later acquisitions without the flag use the committed default again. Return and reuse remove previously seeded files using Treehouse's recorded inventory, even if the local manifest has changed or been deleted.
 
 Treehouse refreshes selected files whenever it creates or reuses a worktree. On Unix-like systems, it preserves regular-file permissions, including executable bits. A source symlink becomes a regular file containing the symlink target text; Treehouse never follows it or creates a destination symlink. Rooted filesystem operations prevent selected paths and existing destination symlinks from escaping either checkout.
 

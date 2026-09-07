@@ -677,6 +677,146 @@ func TestGetLeaseAndStatusJSONContracts(t *testing.T) {
 	}
 }
 
+func TestGetIncludeFileReplacesCommittedManifest(t *testing.T) {
+	for _, backend := range []string{"git", "jj"} {
+		t.Run(backend, func(t *testing.T) {
+			if backend == "jj" {
+				requireJJ(t)
+				isolateJJConfig(t)
+			}
+			env := []string{"TREEHOUSE_VCS=" + backend}
+			repoDir, homeDir := setupTestRepo(t)
+			for name, contents := range map[string]string{
+				".gitignore":       "*.seed\n",
+				".worktreeinclude": "default.seed\n",
+				"default.seed":     "default\n",
+				"local.seed":       "local\n",
+			} {
+				if err := os.WriteFile(filepath.Join(repoDir, name), []byte(contents), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			gitCmd(t, repoDir, "add", ".gitignore", ".worktreeinclude")
+			gitCmd(t, repoDir, "commit", "-m", "configure seeds")
+			gitCmd(t, repoDir, "push", "origin", "main")
+			if backend == "jj" {
+				jjCmd(t, repoDir, "git", "init", "--colocate")
+			}
+			if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("private tracked edit\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(repoDir, "notes.txt"), []byte("unignored\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			subdir := filepath.Join(repoDir, "subdir")
+			if err := os.Mkdir(subdir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			manifestPath := filepath.Join(subdir, "personal.include")
+			if err := os.WriteFile(manifestPath, []byte("local.seed\nREADME.md\nnotes.txt\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			stdout, stderr, code := runTreehouseFromDir(t, repoDir, subdir, homeDir, env,
+				"get", "--lease", "--json", "--include-file", "personal.include")
+			if code != 0 {
+				t.Fatalf("get with local manifest failed: %s", stderr)
+			}
+			var lease leaseJSONResult
+			if err := json.Unmarshal([]byte(stdout), &lease); err != nil {
+				t.Fatalf("invalid lease JSON %q: %v", stdout, err)
+			}
+			for name, want := range map[string]string{"local.seed": "local\n", "README.md": "hello\n"} {
+				got, err := os.ReadFile(filepath.Join(lease.Path, name))
+				if err != nil || string(got) != want {
+					t.Fatalf("%s = %q, %v; want %q", name, got, err, want)
+				}
+			}
+			for _, name := range []string{"default.seed", "notes.txt"} {
+				if _, err := os.Stat(filepath.Join(lease.Path, name)); !os.IsNotExist(err) {
+					t.Fatalf("override copied excluded file %s: %v", name, err)
+				}
+			}
+
+			// Return must rely on the copied-file inventory, not reread a local manifest.
+			if err := os.Remove(manifestPath); err != nil {
+				t.Fatal(err)
+			}
+			if _, stderr, code := runTreehouse(t, repoDir, homeDir, env, "return", lease.Path); code != 0 {
+				t.Fatalf("return failed after deleting manifest: %s", stderr)
+			}
+			if _, err := os.Stat(filepath.Join(lease.Path, "local.seed")); !os.IsNotExist(err) {
+				t.Fatalf("local seed survived return: %v", err)
+			}
+			if err := os.WriteFile(manifestPath, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			stdout, stderr, code = runTreehouse(t, repoDir, homeDir, env,
+				"get", "--lease", "--include-file", manifestPath)
+			if code != 0 || strings.TrimSpace(stdout) != lease.Path {
+				t.Fatalf("empty override did not reuse slot: stdout=%q stderr=%s", stdout, stderr)
+			}
+			for _, name := range []string{"local.seed", "default.seed"} {
+				if _, err := os.Stat(filepath.Join(lease.Path, name)); !os.IsNotExist(err) {
+					t.Fatalf("empty override seeded %s: %v", name, err)
+				}
+			}
+			if _, stderr, code := runTreehouse(t, repoDir, homeDir, env, "return", lease.Path); code != 0 {
+				t.Fatalf("return failed: %s", stderr)
+			}
+			stdout, stderr, code = runTreehouse(t, repoDir, homeDir, env, "get", "--lease")
+			if code != 0 || strings.TrimSpace(stdout) != lease.Path {
+				t.Fatalf("default acquisition did not reuse slot: stdout=%q stderr=%s", stdout, stderr)
+			}
+			got, err := os.ReadFile(filepath.Join(lease.Path, "default.seed"))
+			if err != nil || string(got) != "default\n" {
+				t.Fatalf("default selection was not restored: %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestGetIncludeFileReadFailureLeavesPoolUntouched(t *testing.T) {
+	repoDir, homeDir := setupTestRepo(t)
+	// A directory is unreadable as a manifest even when tests run as root.
+	for _, manifest := range []string{filepath.Join(repoDir, "missing.include"), repoDir, ""} {
+		stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil,
+			"get", "--lease", "--include-file", manifest)
+		if code == 0 || stdout != "" {
+			t.Fatalf("invalid manifest %q acquired a slot: stdout=%q stderr=%s", manifest, stdout, stderr)
+		}
+	}
+	stdout, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "status", "--json")
+	if code != 0 {
+		t.Fatalf("status failed: %s", stderr)
+	}
+	var slots []statusJSONResult
+	if err := json.Unmarshal([]byte(stdout), &slots); err != nil || len(slots) != 0 {
+		t.Fatalf("invalid manifests changed pool: %s, %v", stdout, err)
+	}
+
+	stdout, stderr, code = runTreehouse(t, repoDir, homeDir, nil, "get", "--lease")
+	if code != 0 {
+		t.Fatalf("get failed: %s", stderr)
+	}
+	wtPath := strings.TrimSpace(stdout)
+	if _, stderr, code := runTreehouse(t, repoDir, homeDir, nil, "return", wtPath); code != 0 {
+		t.Fatalf("return failed: %s", stderr)
+	}
+	sentinel := filepath.Join(wtPath, "keep.txt")
+	if err := os.WriteFile(sentinel, []byte("untouched\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code = runTreehouse(t, repoDir, homeDir, nil,
+		"get", "--lease", "--include-file", filepath.Join(repoDir, "missing.include"))
+	if code == 0 || stdout != "" {
+		t.Fatalf("invalid manifest acquired a slot: stdout=%q stderr=%s", stdout, stderr)
+	}
+	got, err := os.ReadFile(sentinel)
+	if err != nil || string(got) != "untouched\n" {
+		t.Fatalf("failed acquisition changed existing slot: %q, %v", got, err)
+	}
+}
+
 func TestGetJSONRequiresLease(t *testing.T) {
 	repoDir, homeDir := setupTestRepo(t)
 
