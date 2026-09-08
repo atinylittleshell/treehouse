@@ -64,7 +64,9 @@ credential with the `workflow` scope. GitHub rejects the push with
 if the stored token lacks it. Fix it before pushing:
 
 ```sh
-# Add the workflow scope to your gh token, then configure git to use it:
+# Add the workflow scope to your gh credentials, then configure git to use it.
+# gh auth refresh re-runs the OAuth flow; if it fails (e.g. you authenticated
+# with a PAT), re-authenticate instead: gh auth login -s workflow
 gh auth refresh -s workflow
 gh auth setup-git
 ```
