@@ -64,10 +64,8 @@ credential with the `workflow` scope. GitHub rejects the push with
 if the stored token lacks it. Fix it before pushing:
 
 ```sh
-# Create a PAT at https://github.com/settings/tokens with workflow + repo scope,
-# then store it for the fork host:
-echo "https://<you>:<PAT>@github.com" >> ~/.no-mistakes/.git-credentials
-# (or: gh auth setup-git if your gh token already has workflow scope)
+# Ensure your gh token has workflow + repo scope, then configure git to use it:
+gh auth setup-git
 ```
 
 ### Tips
