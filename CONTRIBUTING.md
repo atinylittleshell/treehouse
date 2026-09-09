@@ -32,8 +32,9 @@ attestation whose `head_sha` matches the PR head; a hand-added marker is not eno
 curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh
 no-mistakes doctor   # needs git + a supported agent runner + gh
 
-# no-mistakes opens PRs against your `origin` remote, so keep origin on the
-# parent (kunchenguid/treehouse). If you cloned your fork, reset origin first:
+# no-mistakes opens PRs against your `origin` remote, so origin must point to
+# the parent (kunchenguid/treehouse). If you cloned the parent directly you're
+# already set; if you cloned your fork instead, reset origin first:
 #   git remote set-url origin https://github.com/kunchenguid/treehouse.git
 # Then point the gate at your fork via --fork-url. The gate pushes validated
 # branches to your fork while opening PRs against the parent (origin).
