@@ -16,7 +16,76 @@ make test
 1. Fork the repo and create a branch from `main`.
 2. Make your changes.
 3. Run `make lint` and `make test` to verify.
-4. Open a pull request.
+4. Open a pull request (see **Contribution Gate** below).
+
+## Contribution Gate
+
+PRs to `main` must be raised through [no-mistakes](https://github.com/kunchenguid/no-mistakes).
+The required check `PR must be raised via no-mistakes` enforces this — a hand-opened PR
+will stay red until the branch is pushed through the gate. The gate writes a pipeline
+attestation whose `head_sha` matches the PR head; a hand-added marker is not enough.
+
+### Setup (one-time)
+
+```sh
+# Install no-mistakes
+curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh
+no-mistakes doctor   # needs git + a supported agent runner + gh
+
+# no-mistakes opens PRs against your `origin` remote, so origin must point to
+# the parent (kunchenguid/treehouse). If you cloned the parent directly you're
+# already set; if you cloned your fork instead, reset origin first:
+#   git remote set-url origin https://github.com/kunchenguid/treehouse.git
+# Then point the gate at your fork via --fork-url. The gate pushes validated
+# branches to your fork while opening PRs against the parent (origin).
+no-mistakes init --fork-url https://github.com/<you>/treehouse.git
+```
+
+### Raising a PR
+
+```sh
+# On your feature branch, push through the gate (not git push origin)
+git push no-mistakes
+
+# Drive the pipeline to completion
+no-mistakes                    # TUI, or:
+no-mistakes axi run --intent "<what you set out to accomplish>"
+# Loop on gate: with no-mistakes axi respond --action approve|fix|skip
+# until outcome: checks-passed
+```
+
+The gate pushes your branch to your fork, opens (or updates) the PR against the parent
+repo, and writes the attestation into the PR body. Once the pipeline hits
+`checks-passed`, the `PR must be raised via no-mistakes` check goes green on its own.
+
+### Workflow file changes
+
+If your PR touches `.github/workflows/*.yml`, the push to your fork requires a git
+credential with the `workflow` scope. GitHub rejects the push with
+`refusing to allow an OAuth App to create or update workflow ... without workflow scope`
+if the stored token lacks it. Fix it before pushing:
+
+```sh
+# Add the workflow scope to your gh credentials, then configure git to use it.
+# gh auth refresh re-runs the OAuth flow to add the scope. If you authenticate
+# with a PAT, its scopes are immutable — create a new PAT that includes the
+# workflow scope on GitHub and re-authenticate with gh auth login --with-token.
+gh auth refresh -s workflow
+gh auth setup-git
+```
+
+### Tips
+
+- The attestation's `head_sha` must match the current PR head. If you force-push,
+  rebase, or the pipeline auto-fixes land new commits, re-run
+  `no-mistakes axi run` (or `no-mistakes rerun`) to produce a fresh attestation —
+  do not hand-edit the PR body.
+- Let the pipeline make its own fix commits (review/test/lint auto-fixes land on
+  the branch). Don't abort-and-restart to fix a finding yourself mid-run; respond
+  at the gate instead.
+
+See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/start-here/quick-start/)
+for the full walkthrough.
 
 ## Guidelines
 
