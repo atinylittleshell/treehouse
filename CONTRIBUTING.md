@@ -65,9 +65,9 @@ if the stored token lacks it. Fix it before pushing:
 
 ```sh
 # Add the workflow scope to your gh credentials, then configure git to use it.
-# gh auth refresh re-runs the OAuth flow to add the scope. If you authenticated
+# gh auth refresh re-runs the OAuth flow to add the scope. If you authenticate
 # with a PAT, its scopes are immutable — create a new PAT that includes the
-# workflow scope on GitHub, then re-authenticate with it: gh auth login -s workflow
+# workflow scope on GitHub and re-authenticate with gh auth login --with-token.
 gh auth refresh -s workflow
 gh auth setup-git
 ```
