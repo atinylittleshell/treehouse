@@ -32,10 +32,9 @@ attestation whose `head_sha` matches the PR head; a hand-added marker is not eno
 curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh
 no-mistakes doctor   # needs git + a supported agent runner + gh
 
-# In your fork clone, keep origin on your fork and add the parent as upstream
-git remote add upstream https://github.com/kunchenguid/treehouse.git
-
-# Point the gate at your fork
+# In your fork clone, keep origin on the parent (kunchenguid/treehouse)
+# and point the gate at your fork via --fork-url. The gate pushes validated
+# branches to your fork while opening PRs against the parent (origin).
 no-mistakes init --fork-url https://github.com/<you>/treehouse.git
 ```
 
